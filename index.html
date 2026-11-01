@@ -1,0 +1,1707 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta name="color-scheme" content="light"/>
+<meta name="theme-color" content="#efeade"/>
+<link rel="preload" href="assets/fonts/wenkai-regular.woff2" as="font" type="font/woff2" crossorigin/>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' fill='%23efeade'/%3E%3Crect x='3' y='4' width='18' height='16' rx='1' fill='none' stroke='%232d5a87' stroke-width='1.4'/%3E%3Cpath d='M10 12.2h7.2M10 15.4h4.6' stroke='%23b8402e' stroke-width='1.4' stroke-linecap='round'/%3E%3Crect x='10' y='11' width='1.6' height='5.6' fill='%23b8402e' opacity='.25'/%3E%3C/svg%3E"/>
+<meta name="description" content="从一条招聘要求出发：有画布、白板、流程图、节点工作流、编辑器的实际经验。这篇拿一个真实的 canvas 富文本编辑器当标本，把一个字符从字符串走到像素的六层旅程逐层拆开——测量、断行、合并绘制、光标、命中、撤销与自动保存，附四枚确定性小样。"/>
+<meta name="author" content="StarrySea1412"/>
+<meta property="og:title" content="把文字画成像素 · 造物手记 VOL.09"/>
+<meta property="og:description" content="可视化编辑器为什么不能用 contenteditable 写完：一次字符测量的旅行，和光标、命中、撤销、自动保存的真实代价。"/>
+<meta property="og:type" content="article"/>
+<meta property="og:image" content="assets/art/hero.webp"/>
+<title>把文字画成像素 · 造物手记 VOL.09</title>
+<style>
+/* 《把文字画成像素》· 造物手记 VOL.09
+   制图车间：米白描图纸、蓝图网格、朱笔校对色 —— 一份可以摊在桌上的编辑器解剖图。 */
+@font-face{font-family:"LXGW WenKai";src:url("assets/fonts/wenkai-regular.woff2") format("woff2");font-weight:300 599;font-style:normal;font-display:swap}
+@font-face{font-family:"LXGW WenKai";src:url("assets/fonts/wenkai-medium.woff2") format("woff2");font-weight:600 900;font-style:normal;font-display:swap}
+:root{
+  --paper:#efeade;--paper-deep:#e5decc;--card:#f8f5ea;--card2:#f1ecdc;
+  --ink:#24251f;--ink-soft:#4b4c43;--muted:#7d7b6d;--faint:#a5a08d;
+  --line:#d8d0ba;--line-soft:#e3dccb;--line-strong:#bdb39a;
+  --blue:#2d5a87;--blue-soft:rgba(45,90,135,.09);--blue-line:rgba(45,90,135,.34);
+  --red:#b8402e;--red-soft:rgba(184,64,46,.09);
+  --teal:#2f7a6a;--teal-soft:rgba(47,122,106,.1);
+  --gold:#a8812f;--gold-soft:rgba(168,129,47,.11);
+  --code-bg:#1c1f1d;--code-ink:#cdd5c9;
+  --serif:"LXGW WenKai","Songti SC","STSong","Noto Serif CJK SC",serif;
+  --sans:"LXGW WenKai",-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+  --mono:ui-monospace,"SFMono-Regular",Consolas,"Liberation Mono",monospace;
+  --hard:4px 4px 0 rgba(120,108,82,.16);
+  --hard-sm:2px 2px 0 rgba(120,108,82,.15);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:26px}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);line-height:1.95;-webkit-font-smoothing:antialiased;text-spacing:ideograph-alpha;
+  background-image:
+    linear-gradient(rgba(45,90,135,.055) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(45,90,135,.055) 1px,transparent 1px),
+    linear-gradient(rgba(45,90,135,.028) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(45,90,135,.028) 1px,transparent 1px);
+  background-size:96px 96px,96px 96px,16px 16px,16px 16px;
+  background-position:-1px -1px}
+::selection{background:#f3d9b0;color:#2b2010}
+a{color:var(--blue);text-underline-offset:4px;text-decoration-thickness:1px}
+a:hover{color:var(--red)}
+button,a,input,select{touch-action:manipulation}
+button{cursor:pointer;color:inherit;font:inherit}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--red);outline-offset:3px}
+img{display:block;max-width:100%;height:auto}
+p{margin:0 0 1.22em}
+h1,h2,h3,h4{line-height:1.45;text-wrap:balance;margin:0}
+h1,h2,h3{font-family:var(--serif)}
+strong{font-weight:650;color:#16170f}
+code{font-family:var(--mono);font-size:.85em;background:rgba(45,90,135,.08);color:#24466b;padding:.1em .36em;border-radius:2px;overflow-wrap:anywhere;border-bottom:1px solid rgba(45,90,135,.16)}
+em{font-style:normal;color:var(--red);background:linear-gradient(transparent 62%,rgba(184,64,46,.16) 62%)}
+.progress{position:fixed;inset:0 auto auto 0;height:3px;width:100%;background:linear-gradient(90deg,var(--blue),var(--red));transform:scaleX(0);transform-origin:left;z-index:60;pointer-events:none}
+.wrap{max-width:1180px;margin:auto;padding-inline:36px}
+
+/* masthead */
+.masthead{display:flex;align-items:center;justify-content:space-between;gap:18px;padding-block:20px 14px;border-bottom:1.5px solid var(--line-strong);font-size:12px;letter-spacing:.09em;color:var(--muted)}
+.brand{display:flex;align-items:center;gap:11px;font-weight:650;color:var(--ink)}
+.brand-mark{width:25px;height:25px;display:grid;place-items:center;border:1.5px solid var(--line-strong);border-radius:2px;background:var(--card);box-shadow:var(--hard-sm)}
+.brand-mark svg{width:16px;height:16px;display:block}
+.brand small{font-family:var(--mono);font-size:10px;letter-spacing:.14em;color:var(--red);font-weight:700}
+.edition{font-family:var(--mono);font-size:10.5px;letter-spacing:.07em;display:flex;gap:14px;align-items:center}
+.edition .pack{display:inline-flex;align-items:center;gap:7px;color:var(--blue)}
+.pack-dot{width:8px;height:8px;border:1.5px solid var(--red);background:var(--red-soft);transform:rotate(45deg)}
+
+/* hero */
+.hero{padding-block:52px 38px;display:grid;grid-template-columns:1.06fr .94fr;gap:50px;align-items:center}
+.eyebrow{display:inline-flex;align-items:center;gap:10px;font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;color:var(--muted);margin:0 0 22px;background:var(--card);border:1px dashed var(--blue-line);padding:6px 13px 6px 8px;border-radius:2px}
+.eyebrow span{color:var(--blue);letter-spacing:.15em;font-weight:700;padding-right:11px;border-right:1px dashed var(--blue-line)}
+.hero h1{font-size:clamp(44px,5vw,70px);font-weight:800;line-height:1.14;letter-spacing:-.035em;margin:0 0 20px}
+.hero h1 em{color:var(--blue);background:none}
+.hero h1 .sub{display:block;font-size:.4em;font-weight:400;letter-spacing:.02em;color:var(--ink-soft);margin-top:14px;line-height:1.72}
+.dek-wrap{margin:0 0 24px;max-width:566px;border-left:3px solid var(--red);padding-left:18px}
+.dek-tag{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--red);letter-spacing:.09em;margin:0 0 8px}
+.dek{font-size:16.5px;line-height:1.9;color:var(--ink-soft);margin:0}
+.hero-meta{display:flex;flex-wrap:wrap;gap:8px}
+.pill{font-family:var(--mono);font-size:10.5px;letter-spacing:.04em;color:var(--muted);border:1px solid var(--line);border-radius:2px;padding:6px 11px;background:var(--card);box-shadow:var(--hard-sm)}
+.pill b{color:var(--ink);font-weight:700}
+.art{margin:0;position:relative}
+.screen{border:1.5px solid var(--ink);background:var(--card);padding:9px;box-shadow:6px 6px 0 rgba(120,108,82,.2);border-radius:2px}
+.screen-img{position:relative;overflow:hidden;background:#e9e3d3;border:1px solid var(--line)}
+.screen-img img{width:100%;aspect-ratio:4/3;object-fit:cover;filter:saturate(.96)}
+.screen-img::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(rgba(45,90,135,.05),rgba(184,64,46,.04));mix-blend-mode:multiply}
+.tc-bar{display:flex;justify-content:space-between;align-items:center;gap:10px;font-family:var(--mono);font-size:10px;letter-spacing:.05em;color:var(--muted);padding:8px 3px 1px}
+.tc-bar .tc{color:var(--blue)}
+.art figcaption{font-size:11.5px;color:var(--faint);margin-top:9px;line-height:1.7;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-family:var(--mono);letter-spacing:.02em}
+.art figcaption b{color:var(--red);font-weight:700}
+
+/* stats */
+.stats{border-block:1.5px solid var(--line-strong);background:rgba(248,245,234,.72)}
+.stats-inner{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line)}
+.stat{background:var(--card);padding:15px 20px}
+.stat b{display:block;font-family:var(--mono);font-size:23px;letter-spacing:-.02em;color:var(--blue);line-height:1.25}
+.stat b span{font-size:11px;color:var(--faint);letter-spacing:.04em;margin-left:3px}
+.stat small{display:block;font-size:11px;color:var(--muted);letter-spacing:.03em;margin-top:3px}
+
+/* opening + toc */
+.opening{padding-block:46px 18px}
+.jd-card{margin:0 0 28px;border:1px solid var(--line-strong);border-left:4px solid var(--red);background:var(--card);padding:15px 19px 12px;border-radius:2px;box-shadow:var(--hard)}
+.jd-tag{font-family:var(--mono);font-size:10px;letter-spacing:.09em;color:var(--faint);margin:0 0 8px}
+.jd-text{font-size:16px;line-height:1.95;color:var(--ink);margin:0 0 8px}
+.jd-note{font-size:12px;color:var(--muted);margin:0;line-height:1.8}
+.jd-list{margin:12px 0 0;padding:0;list-style:none;display:grid;gap:7px}
+.jd-list li{font-size:13.5px;line-height:1.8;color:var(--ink-soft);display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:baseline}
+.jd-list li i{font-style:normal;font-family:var(--mono);font-size:11px;color:var(--red);font-weight:700}
+.lead{font-size:19.5px;line-height:1.96;color:var(--ink)}
+.lead::first-letter{float:left;font-size:62px;line-height:.86;padding:8px 12px 0 0;color:var(--red);font-weight:800}
+.scope{font-size:12.5px;color:var(--muted);border-top:1px solid var(--line);padding-top:14px;margin-top:26px;font-family:var(--mono);line-height:1.85}
+.toc-head{display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid var(--line-strong);padding-bottom:8px;margin:30px 0 0;font-family:var(--mono);font-size:11px;letter-spacing:.11em;color:var(--faint)}
+.toc{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-top:0;margin:0 0 54px}
+.toc a{background:var(--card);padding:13px 17px;text-decoration:none;color:var(--ink);display:grid;grid-template-columns:56px 1fr;gap:11px;align-items:baseline;transition:background .16s}
+.toc a:hover{background:var(--card2);color:var(--ink)}
+.toc a i{font-family:var(--mono);font-style:normal;font-size:10.5px;color:var(--red);letter-spacing:.03em}
+.toc a span{font-size:14px}
+.toc a small{display:block;font-size:11px;color:var(--faint);margin-top:2px;line-height:1.6}
+
+/* chapters */
+.chapter{padding-block:48px 16px;border-top:1px solid var(--line)}
+.ch-head{display:grid;grid-template-columns:88px 1fr;gap:22px;align-items:start;margin:0 auto 30px;max-width:980px}
+.ch-num{font-family:var(--mono);font-size:13px;color:var(--blue);letter-spacing:.06em;padding-top:12px;border-top:2px solid var(--blue);line-height:1.5}
+.ch-num b{display:block;font-size:33px;color:var(--ink);letter-spacing:-.02em;font-weight:700;line-height:1.1}
+.ch-title h2{font-size:clamp(29px,3.3vw,42px);font-weight:750;letter-spacing:-.024em;line-height:1.25}
+.ch-title p{color:var(--muted);font-size:14px;margin:8px 0 0;line-height:1.8;max-width:640px}
+.ch-body{max-width:768px;margin-inline:auto}
+.ch-body h3{font-size:22px;font-weight:700;margin:40px 0 13px;letter-spacing:-.01em;padding-left:12px;border-left:3px solid var(--red)}
+.ch-body h4{font-size:16px;font-weight:650;margin:24px 0 8px;color:var(--blue)}
+.ch-body ul,.ch-body ol{padding-left:1.35em;margin:0 0 1.25em}
+.ch-body li{margin:.38em 0}
+.ch-body li::marker{color:var(--red)}
+.lede{font-size:17px;color:var(--ink-soft);line-height:1.95}
+.pull{border-left:3px solid var(--red);background:linear-gradient(90deg,var(--red-soft),transparent 72%);padding:16px 21px;margin:26px 0;font-family:var(--serif);font-size:19px;line-height:1.85;color:var(--ink)}
+.pull b{color:var(--red);font-weight:700}
+.note{font-size:13px;color:var(--muted);border-left:2px solid var(--line-strong);padding-left:14px;margin:20px 0;line-height:1.85}
+.note b{color:var(--ink-soft)}
+.fig{margin:30px auto;max-width:980px;position:relative;left:50%;transform:translateX(-50%);width:min(940px,calc(100vw - 72px))}
+.fig .frame{border:1.5px solid var(--line-strong);background:var(--card);padding:14px;box-shadow:var(--hard);border-radius:2px}
+.fig figcaption{font-family:var(--mono);font-size:11.5px;color:var(--faint);letter-spacing:.02em;margin-top:8px;line-height:1.75;display:flex;gap:10px;align-items:baseline}
+.fig figcaption b{color:var(--red);font-weight:700}
+
+/* layer map (ch1) */
+.layers-cap{font-family:var(--mono);font-size:10.5px;letter-spacing:.07em;color:var(--faint);margin:0 0 13px}
+.layers{display:grid;gap:0}
+.layer{display:grid;grid-template-columns:10px 44px 128px 1fr;gap:10px;align-items:stretch;border:1px solid var(--line);border-top:0;background:var(--card);padding:11px 14px}
+.layer:first-of-type{border-top:1px solid var(--line)}
+.layer i{font-style:normal;font-family:var(--mono);font-size:11px;color:var(--faint);padding-top:2px}
+.layer b{font-size:14px;line-height:1.5}
+.layer b small{display:block;font-family:var(--mono);font-size:9.5px;color:var(--faint);font-weight:400;letter-spacing:.05em;margin-top:2px}
+.layer p{margin:0;font-size:12.8px;line-height:1.72;color:var(--ink-soft)}
+.layer p code{font-size:11px}
+.layer-mark{width:8px;border-radius:1px;margin-block:-11px;margin-left:-14px}
+.lm-1{background:var(--blue)}.lm-2{background:var(--teal)}.lm-3{background:var(--gold)}.lm-4{background:var(--red)}.lm-5{background:#6d6486}.lm-6{background:#7a6a4f}
+
+/* code */
+.code{margin:22px 0;border:1.5px solid #2b2f2b;background:var(--code-bg);border-radius:3px;overflow:hidden;box-shadow:var(--hard)}
+.code-bar{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:7px 12px;border-bottom:1px solid #313630;font-family:var(--mono);font-size:10px;letter-spacing:.05em;color:#8b9a86;background:#22261f}
+.code-bar b{color:#e0b978;font-weight:600}
+.code pre{margin:0;padding:14px 15px 16px;overflow-x:auto;font-family:var(--mono);font-size:12.3px;line-height:1.76;color:var(--code-ink);tab-size:2}
+.code pre .c{color:#6f7d6b;font-style:italic}
+.code pre .k{color:#8fbce0}
+.code pre .s{color:#a8c98a}
+.code pre .n{color:#e0b978}
+.code pre .f{color:#8fd0b8}
+
+/* table */
+.tablewrap{overflow-x:auto;margin:22px 0;border:1px solid var(--line-strong);border-radius:2px;background:var(--card);box-shadow:var(--hard-sm)}
+table{border-collapse:collapse;width:100%;font-size:13.4px;min-width:560px}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line-soft);vertical-align:top;line-height:1.7}
+th{background:var(--card2);font-family:var(--mono);font-size:10px;letter-spacing:.07em;color:var(--muted);font-weight:700}
+tr:last-child td{border-bottom:0}
+td b{color:#16170f;font-weight:650}
+td code{font-size:11.3px}
+td.ok{color:var(--teal)}td.warn{color:var(--gold)}
+.num{font-family:var(--mono);font-size:12.4px;color:var(--blue);white-space:nowrap}
+
+/* demos */
+.demo{max-width:1000px;margin:40px auto;border:1.5px solid var(--line-strong);background:var(--card);border-radius:3px;overflow:hidden;box-shadow:var(--hard)}
+.demo-head{display:flex;justify-content:space-between;align-items:center;gap:14px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--card2);flex-wrap:wrap}
+.demo-tag{font-family:var(--mono);font-size:10px;letter-spacing:.09em;color:var(--red);font-weight:700}
+.demo-title{font-size:15px;font-weight:650;margin-left:auto;display:flex;align-items:center;gap:9px}
+.demo-title .hint{font-family:var(--mono);font-size:10px;color:var(--faint);font-weight:400;letter-spacing:.02em}
+.demo-body{padding:16px 17px 15px}
+.controls{display:flex;flex-wrap:wrap;gap:14px 22px;align-items:flex-end;padding-bottom:13px;border-bottom:1px solid var(--line-soft);margin-bottom:13px}
+.ctl{min-width:140px;flex:1}
+.ctl-btn{flex:0 0 auto;display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+.ctl label{display:flex;justify-content:space-between;align-items:baseline;font-family:var(--mono);font-size:10px;letter-spacing:.05em;color:var(--muted);margin-bottom:5px}
+.ctl label b{color:var(--blue);font-weight:700;font-size:12px}
+button.run{background:var(--blue);color:#f7f4ea;font-weight:700;border:0;border-radius:2px;padding:8px 15px;font-size:13px;letter-spacing:.02em;box-shadow:var(--hard-sm)}
+button.run:hover{background:#376b9c}
+button.ghost{background:transparent;border:1px solid var(--line-strong);color:var(--muted);border-radius:2px;padding:8px 13px;font-size:12.5px}
+button.ghost:hover:not(:disabled){border-color:var(--red);color:var(--red)}
+button.ghost:disabled{opacity:.42;cursor:not-allowed}
+input[type=range]{appearance:none;width:100%;height:22px;background:transparent;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:3px;background:var(--line-strong);border-radius:2px}
+input[type=range]::-webkit-slider-thumb{appearance:none;width:14px;height:14px;border-radius:50%;background:var(--blue);border:2px solid var(--card);margin-top:-6px;box-shadow:0 0 0 1px var(--blue)}
+input[type=text],select{background:var(--card);border:1px solid var(--line-strong);border-radius:2px;padding:7px 9px;font-family:var(--sans);font-size:13.4px;color:var(--ink);width:100%}
+input[type=text]:focus,select:focus{outline:2px solid var(--red);outline-offset:1px}
+.switch{display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:10.5px;color:var(--muted);letter-spacing:.01em;cursor:pointer;user-select:none}
+.switch input{appearance:none;width:32px;height:17px;border-radius:9px;background:var(--line-strong);position:relative;cursor:pointer;transition:background .16s}
+.switch input::after{content:"";position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:#fff;transition:transform .16s}
+.switch input:checked{background:var(--blue)}
+.switch input:checked::after{transform:translateX(15px)}
+.hintline{font-family:var(--mono);font-size:10.5px;color:var(--faint);line-height:1.7}
+.demo-foot{border-top:1px solid var(--line-soft);padding:9px 16px;font-family:var(--mono);font-size:10px;color:var(--faint);letter-spacing:.01em;line-height:1.75}
+.demo-foot b{color:var(--blue);font-weight:600}
+
+/* D1 typeset */
+.ts-stage{border:1px solid var(--line-strong);background:repeating-linear-gradient(0deg,transparent 0 27px,rgba(45,90,135,.045) 27px 28px),#fbf8ee;padding:12px 0;border-radius:2px;overflow-x:auto;overflow-y:hidden}
+.ts-ruler{position:relative;height:17px;margin:0 14px 8px;border-bottom:1px solid var(--line-strong);font-family:var(--mono);font-size:8.5px;color:var(--faint)}
+.ts-ruler i{position:absolute;bottom:0;font-style:normal;white-space:nowrap}
+.ts-ruler i::before{content:"";position:absolute;left:50%;bottom:-1px;width:1px;height:5px;background:var(--line-strong)}
+.ts-ruler i.major{color:var(--blue);transform:translateX(-50%)}
+.ts-ruler i.major::before{height:9px;background:var(--blue)}
+.ts-line{position:relative;margin:0 14px;height:28px;display:flex;align-items:flex-end}
+.ts-line .ln{position:absolute;left:-13px;top:6px;font-family:var(--mono);font-size:8.5px;color:var(--faint)}
+.ts-char{position:relative;display:inline-block;height:28px;line-height:26px;text-align:center;overflow:hidden;white-space:pre}
+.ts-char.wrapstart{box-shadow:inset 2px 0 0 var(--red)}
+.ts-char.ts-rest{background:repeating-linear-gradient(45deg,transparent 0 5px,rgba(184,64,46,.06) 5px 10px);border-bottom:1px dashed rgba(184,64,46,.3)}
+.ts-guide{position:absolute;top:0;bottom:0;width:0;border-left:1.5px dashed var(--red);z-index:2}
+.ts-guide::after{content:"innerWidth";position:absolute;top:-1px;right:2px;font-family:var(--mono);font-size:8.5px;color:var(--red);background:var(--card);padding:0 3px}
+.ts-legend{display:flex;gap:16px;flex-wrap:wrap;font-family:var(--mono);font-size:10px;color:var(--faint);margin-top:10px}
+.ts-legend span::before{content:"";display:inline-block;width:9px;height:9px;margin-right:5px;vertical-align:-1px;border:1px solid var(--line-strong)}
+.ts-legend .l-fit::before{background:rgba(47,122,106,.14);border-color:var(--teal)}
+.ts-legend .l-wrap::before{background:repeating-linear-gradient(45deg,transparent 0 3px,rgba(184,64,46,.18) 3px 6px);border-color:rgba(184,64,46,.4)}
+.ts-legend .l-break::before{background:transparent;border:0;border-left:2px solid var(--red);width:2px}
+.ts-readout{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line);margin-top:12px}
+.ts-readout div{background:var(--card);padding:8px 11px;font-family:var(--mono);font-size:9.5px;letter-spacing:.05em;color:var(--faint);line-height:1.6}
+.ts-readout div b{display:block;font-size:16px;color:var(--ink);letter-spacing:-.01em}
+.ts-readout div b small{font-size:9.5px;color:var(--muted);margin-left:2px}
+.ts-naive{font-family:var(--mono);font-size:10.5px;color:var(--red);margin-top:8px;line-height:1.7}
+
+/* D2 paint */
+.pt-wrap{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.pt-page{border:1.5px solid var(--ink);background:#fffdf6;padding:7px;box-shadow:var(--hard);position:relative}
+.pt-runs{display:flex;flex-wrap:wrap;gap:3px;margin-top:8px;font-family:var(--mono);font-size:9px;line-height:1.4;max-height:84px;overflow-y:auto}
+.pt-run{border:1px solid var(--line-strong);background:var(--card);padding:2px 4px;border-radius:2px;color:var(--muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pt-run.one{border-color:var(--red);background:var(--red-soft);color:var(--red)}
+.pt-run.merged{border-color:var(--teal);background:var(--teal-soft);color:var(--teal)}
+.pt-legend{display:flex;gap:14px;flex-wrap:wrap;font-family:var(--mono);font-size:10px;color:var(--faint);margin-top:9px}
+.pt-legend b{font-weight:700}
+.pt-legend .a{color:var(--red)}.pt-legend .b{color:var(--teal)}
+.pt-side{border:1px solid var(--line);background:var(--card2);padding:12px 13px;border-radius:2px}
+.pt-side h5{margin:0 0 8px;font-family:var(--mono);font-size:10px;letter-spacing:.08em;color:var(--faint);font-weight:700}
+.pt-px{font-family:var(--mono);font-size:11.5px;line-height:1.85;color:var(--ink-soft)}
+.pt-px b{color:var(--ink);font-weight:700;font-size:16px}
+.pt-bar{height:9px;background:var(--line);border-radius:2px;overflow:hidden;margin:7px 0 10px;display:flex}
+.pt-bar i{display:block;height:100%;background:var(--blue);transition:width .2s}
+.pt-bar i.b2{background:var(--teal)}
+.pt-crect{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:10px}
+.pt-crect div{border:1px solid var(--line);background:var(--card);padding:7px 9px;font-family:var(--mono);font-size:9.5px;color:var(--faint);line-height:1.55}
+.pt-crect div b{display:block;font-size:14.5px;color:var(--ink);letter-spacing:-.01em}
+
+/* D3 hit */
+.hit-wrap{display:grid;grid-template-columns:1fr 232px;gap:14px}
+.hit-page{border:1px solid var(--line-strong);background:#fffdf6;padding:14px 16px;position:relative;border-radius:2px;min-height:196px;cursor:crosshair;overflow:hidden}
+.hit-page.grid-on{background-image:linear-gradient(rgba(45,90,135,.09) 1px,transparent 1px),linear-gradient(90deg,rgba(45,90,135,.09) 1px,transparent 1px);background-size:16px 16px}
+.hit-line{position:relative;height:26px;font-size:15px;line-height:26px;white-space:nowrap;color:var(--ink)}
+.hit-cell{position:relative;transition:background .1s}
+.hit-cell.scanned{background:rgba(45,90,135,.14)}
+.hit-cell.hit{background:rgba(184,64,46,.26);box-shadow:inset 0 -2px 0 var(--red)}
+.hit-cell.miss{background:rgba(168,129,47,.2);box-shadow:inset 0 -2px 0 var(--gold)}
+.hit-cursor{position:absolute;width:1.5px;background:var(--red);pointer-events:none;z-index:3}
+.hit-cross{position:absolute;font-family:var(--mono);font-size:9px;color:var(--faint);pointer-events:none;z-index:2}
+.hit-side{border:1px solid var(--line);background:var(--card2);padding:11px 12px;border-radius:2px;display:flex;flex-direction:column;gap:9px}
+.hit-side h5{margin:0;font-family:var(--mono);font-size:10px;letter-spacing:.07em;color:var(--faint);font-weight:700}
+.hit-big{font-family:var(--mono);font-size:27px;color:var(--red);line-height:1.15;letter-spacing:-.02em}
+.hit-big small{font-size:10px;color:var(--muted);letter-spacing:.04em;display:block}
+.hit-log{font-family:var(--mono);font-size:9.8px;line-height:1.7;color:var(--muted);background:var(--card);border:1px solid var(--line);border-radius:2px;padding:7px 8px;min-height:92px;max-height:128px;overflow-y:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+.hit-mode{display:flex;border:1px solid var(--line-strong);background:var(--card);border-radius:2px;overflow:hidden}
+.hit-mode button{background:transparent;border:0;padding:6px 11px;font-family:var(--mono);font-size:10px;color:var(--muted)}
+.hit-mode button+button{border-left:1px solid var(--line)}
+.hit-mode button[aria-pressed=true]{background:var(--blue);color:#f7f4ea;font-weight:700}
+
+/* D4 undo */
+.uo-wrap{display:grid;grid-template-columns:1fr 244px;gap:14px}
+.uo-stage{border:1px solid var(--line-strong);background:#fffdf6;border-radius:2px;padding:12px 14px;min-height:200px}
+.uo-text{font-size:14.5px;line-height:1.9;color:var(--ink);min-height:56px}
+.uo-text .new{background:rgba(47,122,106,.16);box-shadow:inset 0 -2px 0 var(--teal)}
+.uo-caret{display:inline-block;width:1.5px;height:17px;background:var(--red);vertical-align:-3px;animation:hitblink 1s steps(1) infinite}
+.uo-stack{margin-top:12px;border-top:1px dashed var(--line);padding-top:9px}
+.uo-stack h5{margin:0 0 7px;font-family:var(--mono);font-size:9.5px;letter-spacing:.07em;color:var(--faint);font-weight:700}
+.uo-cells{display:flex;gap:2px;align-items:flex-end;height:48px;flex-wrap:wrap;align-content:flex-end}
+.uo-cell{width:6px;border-radius:1px 1px 0 0;background:var(--blue);opacity:.55;flex:0 0 auto}
+.uo-cell.fresh{background:var(--red);opacity:1}
+.uo-cell.merged{background:var(--teal);opacity:.9}
+.uo-side{border:1px solid var(--line);background:var(--card2);padding:11px 12px;border-radius:2px;display:flex;flex-direction:column;gap:9px}
+.uo-side h5{margin:0;font-family:var(--mono);font-size:10px;letter-spacing:.07em;color:var(--faint);font-weight:700}
+.uo-kv{display:grid;grid-template-columns:1fr auto;gap:3px 8px;font-family:var(--mono);font-size:10px;color:var(--muted);line-height:1.65}
+.uo-kv b{color:var(--ink);font-weight:700;text-align:right}
+.uo-kv b.over{color:var(--red)}
+.uo-note{font-size:12px;line-height:1.75;color:var(--ink-soft);background:var(--card);border-left:2px solid var(--red);padding:8px 10px;border-radius:0 2px 2px 0}
+@keyframes hitblink{0%,49%{opacity:1}50%,100%{opacity:0}}
+
+/* epilogue */
+.epilogue{max-width:768px;margin:0 auto;padding-block:36px 16px}
+.epilogue h2{font-size:clamp(27px,3vw,37px);margin-bottom:15px}
+.rules{display:grid;gap:9px;margin:22px 0 26px}
+.rule{border:1px solid var(--line-strong);border-left:3px solid var(--blue);background:var(--card);border-radius:0 2px 2px 0;padding:13px 16px;box-shadow:var(--hard-sm)}
+.rule b{display:block;font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;color:var(--blue);margin-bottom:4px}
+.rule p{margin:0;font-size:14.5px;color:var(--ink-soft);line-height:1.82}
+.limits{border-top:1px solid var(--line);padding-top:17px;font-size:13.5px;color:var(--muted)}
+.limits b{color:var(--ink-soft)}
+.links{display:flex;flex-wrap:wrap;gap:8px;margin:22px 0 7px}
+.links a{font-family:var(--mono);font-size:11px;letter-spacing:.02em;border:1px solid var(--line-strong);padding:6px 11px;text-decoration:none;color:var(--blue);background:var(--card);border-radius:2px}
+.links a:hover{border-color:var(--red);color:var(--red)}
+.site-foot{border-top:1.5px solid var(--line-strong);margin-top:48px;padding-block:20px 34px;display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap;font-family:var(--mono);font-size:10.5px;letter-spacing:.03em;color:var(--faint)}
+.site-foot a{color:var(--muted)}
+.foot-note{font-size:10.5px;color:#8b8776;line-height:1.8;max-width:600px}
+
+@media (max-width:980px){
+  .hero{grid-template-columns:1fr;gap:28px;padding-block:38px 28px}
+  .hero h1{font-size:clamp(38px,7.6vw,54px)}
+  .stats-inner{grid-template-columns:repeat(2,1fr)}
+  .ch-head{grid-template-columns:62px 1fr;gap:15px}
+  .ch-num b{font-size:25px}
+  .pt-wrap,.hit-wrap,.uo-wrap{grid-template-columns:1fr}
+  .toc{grid-template-columns:1fr}
+  .layer{grid-template-columns:10px 34px 1fr;grid-template-rows:auto auto;gap:6px 10px}
+  .layer i{grid-row:1}
+  .layer b{grid-column:3}
+  .layer p{grid-column:3;grid-row:2}
+  .layer-mark{margin-block:-11px}
+  .ts-readout{grid-template-columns:repeat(2,1fr)}
+}
+@media (max-width:620px){
+  .wrap{padding-inline:16px}
+  .masthead{font-size:10px;letter-spacing:.04em}
+  .edition .pack{display:none}
+  .hero h1{font-size:36px}
+  .lead{font-size:17.5px}
+  .ch-head{grid-template-columns:1fr;gap:5px}
+  .ch-num{border-top:0;padding-top:0;display:flex;align-items:baseline;gap:9px}
+  .ch-num b{font-size:21px}
+  .ch-title h2{font-size:26px}
+  .ch-body h3{font-size:19px}
+  .demo-body{padding:11px}
+  .demo-title .hint{display:none}
+  .code pre{font-size:11.2px}
+  .fig{width:calc(100vw - 32px)}
+  .pt-crect{grid-template-columns:1fr}
+  .hit-page{padding:10px 11px}
+  .hit-line{font-size:13px}
+  .uo-text{font-size:13px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
+}
+@media print{body{background:#fff}.progress,.demo,.art,.links,.toc,.site-foot{display:none}}
+
+/* fix: guide 的定位祖先必须是 lines 容器 */
+#d1-lines{position:relative}
+
+</style>
+</head>
+<body>
+<div class="progress" id="progress"></div>
+<header class="wrap masthead">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="16" rx="1" stroke="#2d5a87" stroke-width="1.4"/><path d="M3 8.5h18M7 8.5v11" stroke="#2d5a87" stroke-width="1.1" opacity=".55"/><path d="M10 12.2h7.2M10 15.4h4.6" stroke="#b8402e" stroke-width="1.4" stroke-linecap="round"/><rect x="10" y="11" width="1.6" height="5.6" fill="#b8402e" opacity=".2"/></svg></span>
+    <span>造物手记 <small>VOL.09</small></span>
+  </div>
+  <div class="edition">
+    <span class="pack"><i class="pack-dot" aria-hidden="true"></i>DRAFTING / 制图中</span>
+    <span>BLUEPRINT 09 · 2026.11</span>
+  </div>
+</header>
+
+<section class="wrap hero">
+  <div>
+    <p class="eyebrow"><span>FIELD NOTES</span>一次造物式的解剖</p>
+    <h1>把文字<br/><em>画成像素</em><span class="sub">一个可视化编辑器为什么不能用 contenteditable 写完——从一次字符测量的旅行，到光标、命中、撤销、自动保存的真实代价</span></h1>
+    <div class="dek-wrap">
+      <p class="dek-tag">本片提要</p>
+      <p class="dek">招聘要求里写着：有画布、白板、流程图、节点工作流、编辑器的实际经验，「只做过管理后台表格页面的不合适」。这句话的门槛不在会不会画，而在你敢不敢接管浏览器本来白送的东西——文字不再由浏览器排，光标不再由浏览器画，历史不再是 Ctrl+Z。这篇拿一个真实的 canvas 富文本编辑器当标本，把一个字符从字符串走到像素的旅程逐段拆开，再把那些「看起来最简单」的东西，一件件算清代价。</p>
+    </div>
+    <div class="hero-meta">
+      <span class="pill"><b>7</b> 章解剖</span>
+      <span class="pill"><b>4</b> 枚可玩小样</span>
+      <span class="pill"><b>2979</b> 行 · 绘制核心</span>
+      <span class="pill">MIT · v0.9.132</span>
+    </div>
+  </div>
+  <figure class="art">
+    <div class="screen">
+      <div class="screen-img">
+        <img src="assets/art/hero.webp" alt="单眼折纸鸟站在制图桌前，叼着红铅笔，蓝格图纸上的一行字正被排成一个个带红勾的方块" width="1152" height="832"/>
+      </div>
+      <div class="tc-bar"><span>LAYOUT BENCH 09</span><span class="tc">MEASURE · WRAP · PAINT</span></div>
+    </div>
+    <figcaption><span><b>FIG. 00</b> 排版台：一行字被拆成一个个可计量的方块</span><span>INK &amp; GOUACHE / 2026</span></figcaption>
+  </figure>
+</section>
+
+<section class="stats" aria-label="关键数字">
+  <div class="wrap stats-inner">
+    <div class="stat"><b>6<span>层</span></b><small>解剖路径：模型 → 测量 → 断行 → 绘制 → 命中 → 状态</small></div>
+    <div class="stat"><b>4<span>枚</span></b><small>确定性小样：排版流水线 / 绘制合并 / 命中测试 / 撤销合并</small></div>
+    <div class="stat"><b>14.3<span>MB</span></b><small>一页 A4 画布的显存账（794×1123 @ DPR 2，RGBA）</small></div>
+    <div class="stat"><b>100<span>步</span></b><small>默认撤销上限；每一步是一份全文档闭包快照</small></div>
+  </div>
+</section>
+
+<div class="wrap opening">
+  <div class="prose">
+    <div class="jd-card">
+      <p class="jd-tag">JOB DESCRIPTION · 前端开发 · 要求第 ③ 条（原文如此）</p>
+      <p class="jd-text">「有<em>可视化编辑器</em>或复杂交互产品的实际经验：画布、白板、流程图、节点工作流、编辑器，做过其中一种即可；只做过管理后台表格页面的不合适。」</p>
+      <p class="jd-note">同一条要求后面还跟着三条（④⑤⑥），它们不是四个独立技能，而是同一个东西的四个面：</p>
+      <ul class="jd-list">
+        <li><i>④</i><span>熟悉 Canvas / SVG，了解浏览器性能优化，能排查页面卡顿、内存占用高的问题。</span></li>
+        <li><i>⑤</i><span>熟悉浏览器本地存储（localStorage、IndexedDB 等），处理过自动保存、状态恢复、多标签页数据隔离这类问题。</span></li>
+        <li><i>⑥</i><span>有图片、视频等媒体文件的前端处理经验。</span></li>
+      </ul>
+      <p class="jd-note" style="margin-top:10px">——写这份 JD 的人显然自己做过。它没有问「熟不熟某个框架」，而是直接点名卡顿、内存、自动保存、多标签页——这些是编辑器做起来之后才会一个一个撞上的墙。</p>
+    </div>
+    <p class="lead">第一次认真读这几行字，是深夜里对着一个 canvas 编辑器的源码的时候。当时有一种很奇怪的感觉：这几条描述的不是「技能」，是「刑期」——每一条背后都是若干个通宵。因为一旦你决定不用 contenteditable，而是自己把文字画到 canvas 上，你就同时接过了浏览器排版引擎的全部工作：断行、行高、光标、选区、命中、撤销、持久化。浏览器本来自动白送的东西，你得一件一件自己做，而且每件都要做得跟浏览器一样快。</p>
+    <p>这篇不打算写成「canvas 教程」——API 速查式的文章太多了。我想做一件更朴素的事：<strong>拿一个真实在跑的开源 canvas 富文本编辑器当标本，把一个字从字符串变成屏幕上像素的完整旅程，一层一层拆给你看。</strong>每一层都配一个能拨动参数、亲眼看见后果的小样——不是录屏，是确定性模型，参数摊在明面上，你可以自己推翻我的结论。</p>
+    <p>先立一个判断，全文都靠它撑着：<strong>可视化编辑器的难点，从来不是「画」，是「一致」。</strong>同一份文档数据，要同时喂给三个互相看不见的消费者——排版引擎要拿它算行宽，绘制引擎要拿它填像素，命中测试要拿它算「鼠标这一下点中了哪个字」。这三个消费者对同一份数据的理解差一个像素，用户就会看到光标和文字对不上、点一下选错字、拖一次选区跳三行。所谓「复杂交互产品」，复杂就复杂在这里。</p>
+    <p>三个消费者、一份数据、必须完全一致——这就是本文的解剖主轴。剩下的章节，是把这句话拆开验证。</p>
+    <p class="scope">阅读说明：全文约一万四千字，七章 + 四枚小样。第 1 章立起「不用 contenteditable」的账本；第 2 章走测量与断行（附排版流水线）；第 3 章讲绘制与合并（附绘制合并台）；第 4 章解剖光标与命中测试（附命中测试台）；第 5 章算撤销栈与自动保存的代价（附撤销合并器）；第 6 章是多标签页、内存与媒体的三笔烂账；第 7 章收束成一张自检清单。四枚小样全部确定性：无随机数，参数可调，行为可复现。</p>
+  </div>
+
+  <p class="toc-head"><span>BLUEPRINT INDEX / 图纸清单</span><span>07 SECTIONS · 04 DEMOS</span></p>
+  <nav class="toc" aria-label="目录">
+    <a href="#ch1"><i>01 / 00:00</i><span>不用 contenteditable 的账本<small>六个本来自动白送的东西，现在都要自己付钱</small></span></a>
+    <a href="#ch2"><i>02 / 06:20</i><span>一次字符测量的旅行<small>断行不是数长度，是逐字量完再决定往哪折</small></span></a>
+    <a href="#ch3"><i>03 / 13:10</i><span>把像素按批次交给 GPU<small>为什么一万个 fillText 会卡，而几十次不会</small></span></a>
+    <a href="#ch4"><i>04 / 20:00</i><span>光标与那一「下」<small>命中测试：鼠标坐标怎么变回字符下标</small></span></a>
+    <a href="#ch5"><i>05 / 27:40</i><span>撤销栈与自动保存的账<small>每一步一份全文档快照，和那个没人愿提的合并问题</small></span></a>
+    <a href="#ch6"><i>06 / 34:20</i><span>三笔烂账：多标签页、内存、媒体<small>JD 后三条的正面回答</small></span></a>
+    <a href="#ch7"><i>07 / 41:30</i><span>一张自检清单<small>面试可以照着问，自己也可以照着做</small></span></a>
+    <a href="#closing"><i>END / 47:00</i><span>结语：接过来的是控制权，也是全部责任<small>三条带得走的判断，和这篇没解决的问题</small></span></a>
+  </nav>
+</div>
+
+<main>
+<section class="chapter" id="ch1">
+  <div class="ch-head">
+    <div class="ch-num"><b>01</b>CHAPTER<br/>00:00</div>
+    <div class="ch-title">
+      <h2>不用 contenteditable 的账本</h2>
+      <p>六个本来自动白送的东西，换成 canvas 之后都要自己付钱——先把这张账单摊开，再逐项去付</p>
+    </div>
+  </div>
+  <div class="ch-body">
+    <p class="lede">先说清楚为什么有人要受这份罪。<code>contenteditable="true"</code> 加一个 div，五秒钟你就有富文本编辑器了：光标、选区、断行、复制粘贴、输入法，全是浏览器白送的。那为什么在线文档、标书系统、报表设计器、电子病历编辑器，一个个都绕开了它？</p>
+
+    <h3>先说 contenteditable 给出的，和它不给的</h3>
+    <p>它给的是一套<strong>对你完全黑箱的排版结果</strong>。浏览器把内容和样式渲染成一棵 DOM 树，交给排版引擎，输出一堆高度不可控的盒子。你想知道「第 3 行第 12 个字距离左边多少像素」，唯一的办法是 <code>getClientRects()</code> 遍历——而它的结果依赖浏览器对行内盒子的切分策略，跨浏览器不稳定，性能还差。</p>
+    <p>这在「写篇文章发出去」的场景里无所谓，但在下面这些场景里是致命的：</p>
+    <ul>
+      <li><strong>分页</strong>——A4 纸、页眉页脚、页码、「第几页共几页」。DOM 流式布局天然不知道「页」是什么，你得靠算高度硬切，切点往往落在行中间。</li>
+      <li><strong>精确复现</strong>——用户要求「导出 PDF、打印出来，和屏幕上看到的完全一样」，甚至要求「和 Word 里的版式完全一样」。DOM 渲染依赖字体回退、子像素和浏览器差异，这三样每台机器都不同；canvas 画出来的东西，就是同一份绘制指令，走到哪都一样。</li>
+      <li><strong>非文本对象</strong>——表格跨页拆分、浮动图片环绕文字、表单控件、水印、套打模板的绝对定位。DOM 里每个都要打补丁，补到后面你自己都记不清哪个 hack 在管哪块。</li>
+      <li><strong>超大文档</strong>——几万字加几十个表格的文档，DOM 节点以万计，每次输入触发一次全树样式计算和布局，卡顿是结构性的，不是优化能救的。</li>
+    </ul>
+    <p>于是有了另一条路：<strong>自己定义文档模型，自己排版，自己画。</strong>文字不进 DOM，进 canvas。这条路换来的是完全的可控和确定——代价是，浏览器本来白送的六件事，你要一件一件自己做，而且每件都要付真金白银的工程时间。</p>
+
+    <div class="fig">
+      <div class="frame">
+        <p class="layers-cap">FIG. 01 · 六层解剖图——同一个字符在六层之间被反复理解，每层都必须和上一层对得上</p>
+        <div class="layers">
+          <div class="layer"><span class="layer-mark lm-1"></span><i>L1</i><b>文档模型<small>elementList</small></b><p>一个平坦数组，<strong>每个字符是一个对象</strong>：<code>{ value: '排', size: 16, bold: true }</code>。没有节点树——行和页都是算出来的临时产物，不存进数据。</p></div>
+          <div class="layer"><span class="layer-mark lm-2"></span><i>L2</i><b>测量<small>measureText</small></b><p>每个字的宽度必须问画布：设好 <code>ctx.font</code> 再 <code>ctx.measureText('排').width</code>。同一个字，换字号就是另一个数。</p></div>
+          <div class="layer"><span class="layer-mark lm-3"></span><i>L3</i><b>断行<small>computeRowList</small></b><p>从左往右累加宽度，超过 <code>innerWidth</code> 就折。但中文能随便折、英文单词不能拆、标点不能顶行首——三条规矩在这一层打架。</p></div>
+          <div class="layer"><span class="layer-mark lm-4"></span><i>L4</i><b>成行与定位<small>rowList / positionList</small></b><p>每行记下高度、基线、起始下标；每个字记下四个角的坐标。<strong>这份坐标表，后面所有人都在读。</strong></p></div>
+          <div class="layer"><span class="layer-mark lm-5"></span><i>L5</i><b>绘制<small>fillText</small></b><p>按坐标把字填进 canvas。关键优化：<strong>同一字体同一颜色的连续字符合并成一次 fillText</strong>——上万次调用变几十次。</p></div>
+          <div class="layer"><span class="layer-mark lm-6"></span><i>L6</i><b>交互<small>光标 / 命中 / 选区</small></b><p>反向解读 L4 的坐标表：鼠标 <code>(x, y)</code> 落在哪个字的框里？光标画在第几个字后面？选区从哪到哪？</p></div>
+        </div>
+      </div>
+      <figcaption><span><b>FIG. 01</b> 六层，一份数据，三个消费者：排版、绘制、交互</span><span>贯穿全文的地图</span></figcaption>
+    </div>
+
+    <p>这张图不是教学抽象，是从一个真实项目里量出来的。我解剖的标本是开源项目 <strong>canvas-editor</strong>（MIT 协议，npm 上叫 <code>@hufe921/canvas-editor</code>），一句自我介绍写得很清楚：「a rich text editor by canvas/svg」。它的绘制核心是一个 2979 行的 <code>Draw.ts</code>，整个 core 目录 117 个 TypeScript 文件、19 个子模块——分工大致就是 FIG. 01 的六层，再加事件、快捷键、右键菜单这些外壳。</p>
+    <p>下面这张表是那笔账的明细。左边是 contenteditable 模式下浏览器替你做的事，右边是 canvas 模式下你要自己做的事：</p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>能力</th><th>contenteditable</th><th>canvas 自绘</th></tr></thead>
+        <tbody>
+          <tr><td><b>断行与行高</b></td><td>浏览器排版引擎，免费</td><td>逐字测量 + 缓存 + 基准字行高（第 2 章）</td></tr>
+          <tr><td><b>光标与输入法</b></td><td>原生，免费</td><td>DOM 光标 div + 隐藏输入代理（第 4 章）</td></tr>
+          <tr><td><b>命中测试</b></td><td>浏览器事件天然知道点在哪个节点</td><td>坐标表矩形判定 + 就近吸附（第 4 章）</td></tr>
+          <tr><td><b>选区高亮</b></td><td>原生</td><td>区间 → 按行合并矩形 → 画在文字下层（第 4 章）</td></tr>
+          <tr><td><b>撤销重做</b></td><td>浏览器内建 undo 栈</td><td>闭包快照栈 + 合并策略（第 5 章）</td></tr>
+          <tr><td><b>自动保存 / 状态恢复</b></td><td>表单有部分原生恢复，富文本没有</td><td>节流写入 IndexedDB + pagehide 兜底（第 5、6 章）</td></tr>
+          <tr><td><b>无障碍 / 读屏</b></td><td>大部分免费</td><td class="warn">几乎全部要自己补：键盘导航 + ARIA live 区域</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>表里最后一行值得单独说：<strong>无障碍是这笔账里最贵、也最常被假装不存在的。</b>canvas 对读屏软件来说就是一块空白的图。真实产品里要补完整套键盘导航、虚拟光标、ARIA live 公告——这部分的工程量常常超过渲染本身。这篇不展开（第六篇手记的事），但每次吹嘘 canvas 编辑器的时候，这一行都应该挂在账上。</p>
+
+    <div class="pull">六层账单里，前五层是「做出来」，最后一层是「做对」。<b>大部分自研编辑器死在最后一层。</b></div>
+
+    <p>好，账摊开了。从最底层、也最容易被低估的那一层开始：一个字有多宽。</p>
+  </div>
+</section>
+
+<section class="chapter" id="ch2">
+  <div class="ch-head">
+    <div class="ch-num"><b>02</b>CHAPTER<br/>06:20</div>
+    <div class="ch-title">
+      <h2>一次字符测量的旅行</h2>
+      <p>断行不是数字符个数，是逐字量完再决定往哪折——而这套测量本身，就是整个编辑器最贵的一次往返</p>
+    </div>
+  </div>
+  <div class="ch-body">
+    <p class="lede">先问一个看似幼稚的问题：一个汉字有多宽？十六号字，一个汉字大约十六像素——这个答案对等宽字体成立，对绝大多数中文字体也近似成立。那英文呢？「i」和「W」在同一个字号下，宽度能差三倍以上。所以「这一行能放多少个字」这个问题，诚实的答案是：<strong>不知道，得一个一个量。</strong></p>
+
+    <h3>为什么不能数长度</h3>
+    <p>如果按字符个数切行，一行里塞十个「i」和一串「WWWW」，屏幕上会出现一行很短、一行溢出的惨状。如果按「平均字宽 × 个数」估算，只要出现粗体、字号混排、中英混排、标点，误差立刻累积成可见的错位。真实的排版必须是逐字符的：</p>
+
+    <div class="code"><div class="code-bar"><b>断行的最小骨架</b><span>伪代码 · 与真实实现同构</span></div>
+<pre><span class="k">let</span> x = <span class="n">0</span>;
+<span class="k">for</span> (<span class="k">const</span> el <span class="k">of</span> elementList) {            <span class="c">// 逐个字符元素</span>
+  ctx.font = <span class="f">getElementFont</span>(el);             <span class="c">// ① 切字体（斜体/粗体/字号）</span>
+  <span class="k">const</span> m = <span class="f">measureText</span>(ctx, el);           <span class="c">// ② 量宽（有缓存）</span>
+  <span class="k">if</span> (x + m.width &gt; availableWidth) {        <span class="c">// ③ 超了要折行</span>
+    <span class="f">pushRow</span>();                               <span class="c">//    但折点在哪？→ 见下文</span>
+    x = <span class="n">0</span>;
+  }
+  <span class="f">place</span>(el, x); x += m.width;
+}</pre></div>
+
+    <p>这段代码在标本项目里对应着 <code>Draw.ts</code> 里 2979 行中的一大段 <code>computeRowList</code>。它比伪代码多出来的每一行，都是一个真实的坑。逐个看。</p>
+
+    <h3>坑一：measureText 很贵，所以要缓存；缓存的键里必须有字体</h3>
+    <p><code>ctx.measureText()</code> 是一个同步调用，要穿过 JS 与图形层边界。单次几微秒，但一篇两万字的文档一次完整排版就是两万次；用户每敲一个键、每拖一次选区，都可能触发完整重排。所以所有认真的实现都会加缓存，标本项目里的写法朴素到近乎简陋，却精确地踩在正确性上：</p>
+
+    <div class="code"><div class="code-bar"><b>字宽缓存（真实源码，节选）</b><span>TextParticle.ts</span></div>
+<pre><span class="k">const</span> id = <span class="s">`${element.value}${ctx.font}`</span>;    <span class="c">// ← 键 = 字符 + 完整字体串</span>
+<span class="k">const</span> hit = <span class="k">this</span>.cacheMeasureText.<span class="f">get</span>(id);
+<span class="k">if</span> (hit) <span class="k">return</span> hit;                        <span class="c">// 命中，零成本</span>
+<span class="k">const</span> textMetrics = ctx.<span class="f">measureText</span>(element.value);
+<span class="k">this</span>.cacheMeasureText.<span class="f">set</span>(id, textMetrics);
+<span class="k">return</span> textMetrics;</pre></div>
+
+    <p>「字体串也算进键」是这段代码的灵魂。<code>ctx.font</code> 是一整个字符串——<code>"bold 24px Microsoft YaHei"</code>——粗细、字号、字体名任何一个变了，串就不同，缓存自动失效。<strong>如果只拿字符做键，用户把「排」从 16 号改成 24 号，缓存会面不改色地告诉你它还是 16 像素宽，整行排版全部错位。</strong>这类 bug 在测试环境里很难发现，因为测试用的都是同一种格式。</p>
+    <p>顺带一提，测量不用正在显示的那块画布。标本项目在 <code>computeRowList</code> 开头专门造了一块看不见的离屏画布：</p>
+
+    <div class="code"><div class="code-bar"><b>离屏测量画布（真实源码，节选）</b><span>Draw.ts · computeRowList 开头</span></div>
+<pre><span class="k">if</span> (!<span class="k">this</span>._measureCanvas) {
+  <span class="k">this</span>._measureCanvas = document.<span class="f">createElement</span>(<span class="s">'canvas'</span>);
+  <span class="k">this</span>._measureCtx   = <span class="k">this</span>._measureCanvas.<span class="f">getContext</span>(<span class="s">'2d'</span>);
+}
+<span class="k">const</span> ctx = <span class="k">this</span>._measureCtx!;</pre></div>
+
+    <p>原因有二：一是测量只需要 2D 上下文，不需要像素，用可见页的上下文反而要来回切换它的状态；二是可见页的上下文带着 <code>scale(dpr)</code> 变换，在它上面量出来的宽度会被放大 DPR 倍——排版要在 CSS 像素空间做，量宽也得在同一个空间。</p>
+
+    <p class="note"><b>另一个更隐蔽的坑：字体没加载完。</b>用 Web Font 时，字体加载前后 <code>measureText</code> 返回不同宽度。如果排版发生在字体到位之前，整篇文档按回退字体排好，字体到位后不重排——用户看到的就是文字「挤在一起」或「稀稀拉拉」。正确做法是 <code>document.fonts.ready</code> 之后再做首次排版。这篇页面自己的小样也遵守这条（你打开页面时小样等了字体才渲染第一次）。</p>
+
+    <h3>坑二：行高不是「这行最高的字有多高」</h3>
+    <p>几乎所有自研实现都会在这里踩一遍。<code>measureText</code> 返回的 <code>actualBoundingBoxAscent/Descent</code> 是<strong>这个字符墨迹的实际上下界</strong>——「口」「国」「一」「g」四个字的上下界完全不同。如果按每个字符自己的墨迹算行高，同一行里出现一个「g」（有下沉）或「·」（几乎没有高度），整行就会跳。</p>
+    <p>标本项目里的解法带了一句注释，比任何教程都说得清楚：</p>
+
+    <div class="code"><div class="code-bar"><b>基准字（真实源码，节选）</b><span>基准字符是一个固定取样的「中」</span></div>
+<pre><span class="c">// 使用基于字体的基准度量以确保一致的行高，避免字符特定度量导致的布局跳动</span>
+<span class="k">const</span> basisMetrics = <span class="k">this</span>.textParticle.<span class="f">measureBasisWord</span>(ctx, element.font!);
+metrics.boundingBoxAscent  = basisMetrics.actualBoundingBoxAscent  * scale;
+metrics.boundingBoxDescent = basisMetrics.actualBoundingBoxDescent * scale;</pre></div>
+
+    <p>所谓基准字，就是<strong>对每种字体固定量一个「中」字</strong>（源码常量 <code>METRICS_BASIS_TEXT = '中'</code>），之后这个字体里所有字符的行高贡献都用它的上下界。同一字体同一字号的行，无论内容是什么，行高永远一致。代价是极端情况下墨迹可能微微探出行盒子——但用户看不见那个，用户只看得见「行高稳不稳定」。</p>
+
+    <div class="pull">排版里所有「看起来对」的近似，背后都是同一个取舍：<b>牺牲墨迹的绝对精确，换布局的绝对稳定。</b></div>
+
+    <h3>坑三：折行点不是「放不下的那个字」</h3>
+    <p>中文的断行可以发生在任意两个字之间（除了避头尾），但英文不行——<code>document</code> 不能折成 <code>docu</code> + <code>ment</code>，否则读者会在行尾看到半个词。所以断行算法遇到英文单词时，要先把它<strong>整体</strong>量出宽度：整个词放得下当前行剩余空间，就整词计入；整个词比一行还宽，才允许硬拆。标本项目里对应着一段专门的词宽预量：</p>
+
+    <div class="code"><div class="code-bar"><b>整词与标点（真实源码，节选）</b><span>Draw.ts · 折行判定</span></div>
+<pre><span class="c">// 累计行宽 + 当前元素宽度 + 排版宽度(英文单词整体宽度 + 后面标点符号宽度)</span>
+<span class="k">let</span> curRowWidth = curRow.width + metrics.width;
+<span class="k">if</span> (<span class="k">this</span>.options.wordBreak === WordBreak.BREAK_WORD) {
+  <span class="k">const</span> word = <span class="s">`${preElement?.value || ''}${element.value}`</span>;
+  <span class="k">if</span> (<span class="k">this</span>.WORD_LIKE_REG.<span class="f">test</span>(word)) {
+    <span class="k">const</span> { width, endElement } = <span class="k">this</span>.textParticle.<span class="f">measureWord</span>(ctx, elementList, i);
+    <span class="k">const</span> wordWidth = width * scale;
+    <span class="k">if</span> (endElement && wordWidth &lt;= availableWidth) {
+      curRowWidth += wordWidth;              <span class="c">// 整词计入本行</span>
+      nextElement = endElement;              <span class="c">// 判定边界推到词尾</span>
+    }
+  }
+  <span class="c">// 标点符号：跟着词一起算，不让句号孤零零顶到下一行行首</span>
+  curRowWidth += <span class="k">this</span>.textParticle.<span class="f">measurePunctuationWidth</span>(ctx, nextElement) * scale;
+}</pre></div>
+
+    <p>注意最后那行标点处理：<strong>句号、逗号不能出现在行首</strong>（避尾规则）。所以计算一个词能不能放进这行时，必须把它后面的标点也一起算进去——否则你会得到「词放得下了，但句号被挤到下一行开头」这种丑到没救的结果。中文还有另一半：行首不能是收尾标点（<code>。，、；：？！）」</code>），行尾不能是开口标点（<code>（「</code>）。标本项目把这张清单硬编码成一个二十来项的常量数组——不优雅，但每一项都是排出来的血泪。</p>
+
+    <h3>坑四（最贵的那一个）：排版是 O(文档长度)，而每次按键都会触发</h3>
+    <p>把上面所有东西合起来：一次完整排版 = 遍历全部字符 ×（查缓存量宽 + 折行判定 + 记录坐标）。两万字文档，就算缓存全命中，也要遍历两万个对象、累加两万次宽度、生成两万条坐标记录。这个成本无论缓存多好都降不到零，因为它<strong>和文档长度线性相关</strong>。</p>
+    <p>而用户打字时每次按键都触发「内容变更 → 重排 → 重绘」。大文档必然卡。业界的答案不是「把排版写得更快」，而是两招更粗的：<strong>只画可见页</strong>（第 3 章）、<strong>降级渲染</strong>（低端机关精细效果）。第 4 条 JD 里说的「性能优化」，在编辑器语境里首先是这两条架构决策，其次才是技巧。</p>
+
+    <div class="demo" id="d1">
+      <div class="demo-head">
+        <span class="demo-tag">DEMO 01 · TYPESET</span>
+        <span class="demo-title">排版流水线<span class="hint">拖动版心宽度，看每个字怎么被量、哪一行先折</span></span>
+      </div>
+      <div class="demo-body">
+        <div class="controls">
+          <div class="ctl" style="flex:2 1 260px">
+            <label>文本 <b id="d1-len">0 字</b></label>
+            <input type="text" id="d1-text" value="把文字画成像素，是一次造物。排版引擎先量每一个字，再决定往哪折。" spellcheck="false"/>
+          </div>
+          <div class="ctl" style="flex:1 1 170px">
+            <label>版心宽度 innerWidth <b id="d1-w">420</b></label>
+            <input type="range" id="d1-width" min="180" max="560" step="10" value="420"/>
+          </div>
+          <div class="ctl" style="flex:0 1 150px">
+            <label>字号 <b id="d1-fs">16</b></label>
+            <input type="range" id="d1-fs-in" min="10" max="26" step="1" value="16"/>
+          </div>
+        </div>
+        <div class="ts-stage" id="d1-stage">
+          <div class="ts-ruler" id="d1-ruler"></div>
+          <div id="d1-lines"></div>
+        </div>
+        <div class="ts-legend">
+          <span class="l-fit">已逐字量宽</span>
+          <span class="l-wrap">行尾剩余空间</span>
+          <span class="l-break">折行起点</span>
+        </div>
+        <div class="ts-readout">
+          <div>字符数<b id="d1-n">0</b></div>
+          <div>行数<b id="d1-rows">0</b></div>
+          <div>量宽次数<b id="d1-measure">0<small>次</small></b></div>
+          <div>最后一行填充率<b id="d1-fill">0<small>%</small></b></div>
+        </div>
+        <p class="ts-naive" id="d1-naive"></p>
+        <div class="hintline" style="margin-top:10px">模型说明：字宽按「全角＝1.0×字号，半角＝0.55×字号」确定性推算，与真实 <code>measureText</code> 的量级关系一致（真实取值随字体浮动 ±5%）。「量宽次数」＝字符数——这就是逐字排版的本质成本；缓存可以把重复量宽降到零，但首次排版躲不掉。</div>
+      </div>
+      <div class="demo-foot">试着在文本里混进一串英文字母（比如 paste measures），再拖窄版心：<b>折行点会跳到整个单词的开头</b>，行尾留出一大段空白——那就是「整词不拆」的代价，也是正确排版的证据。</div>
+    </div>
+
+    <p>小样里那个「量宽次数」，就是这一层的全部重量：它等于字符数。后面所有章节的复杂度，都是从这个线性数字上长出来的。</p>
+    <p>量完了，字有宽有高，坐标也定了。接下来是把它们真正画到画布上——而「画」这个动作里，藏着一个能让帧率差出十倍的秘密。</p>
+  </div>
+</section>
+
+<section class="chapter" id="ch3">
+  <div class="ch-head">
+    <div class="ch-num"><b>03</b>CHAPTER<br/>13:10</div>
+    <div class="ch-title">
+      <h2>把像素按批次交给 GPU</h2>
+      <p>为什么一万个 fillText 会卡，而几十次不会——绘制层的合并、懒渲染与「画哪一页」的算计</p>
+    </div>
+  </div>
+  <div class="ch-body">
+    <p class="lede">坐标算好了，每个字都知道自己该待在哪。最直觉的画法是：遍历字符，一个一个 <code>fillText</code>。两万字文档 = 两万次 canvas 调用。这条路在台式机上能跑，在笔记本上会烧起来，在手机上直接躺平。</p>
+
+    <h3>fillText 的真正成本不在渲染，在往返</h3>
+    <p>一次 <code>fillText</code> 的开销分三块：① JS 到图形层的调用穿越；② 字形查找与整形（shaping）；③ 光栅化。后两项其实不慢——GPU 画字很快——真正慢的是<strong>第一项乘以次数</strong>：两万次调用，每次几百纳秒的边界穿越加起来就是几十毫秒，还没算驱动层的批处理被反复打断。</p>
+    <p>而同一行字里，绝大多数情况下相邻字符共享<strong>同一个字体串、同一个颜色</strong>。既然参数没变，为什么要分开画？标本项目的答案是：攒着，一起画。它有一个专门的 TextParticle（文本粒子）干这件事，核心是两个方法——<code>record()</code> 负责记账，<code>complete()</code> 负责结算：</p>
+
+    <div class="code"><div class="code-bar"><b>文本合并绘制（真实源码，节选）</b><span>TextParticle.ts · record / _render</span></div>
+<pre><span class="k">public</span> <span class="f">record</span>(ctx, element, x, y) {
+  <span class="c">// 样式变了才「收口」：把攒着的一起画掉，再开新一批</span>
+  <span class="k">if</span> ((<span class="k">this</span>.curStyle && element.style !== <span class="k">this</span>.curStyle)
+      || element.color !== <span class="k">this</span>.curColor) {
+    <span class="k">this</span>.<span class="f">complete</span>();
+    <span class="k">this</span>.<span class="f">_setCurXY</span>(x, y);
+  }
+  <span class="k">this</span>.text += element.value;   <span class="c">// 只是拼字符串，还没画</span>
+  <span class="k">this</span>.curStyle = element.style;
+  <span class="k">this</span>.curColor = element.color;
+}
+
+<span class="k">private</span> <span class="f">_render</span>() {
+  <span class="k">if</span> (!<span class="k">this</span>.text) <span class="k">return</span>;
+  <span class="k">this</span>.ctx.font      = <span class="k">this</span>.curStyle;
+  <span class="k">this</span>.ctx.fillStyle = <span class="k">this</span>.curColor;
+  <span class="k">this</span>.ctx.<span class="f">fillText</span>(<span class="k">this</span>.text, <span class="k">this</span>.curX, <span class="k">this</span>.curY); <span class="c">// 一次画一串</span>
+}</pre></div>
+
+    <p>效果是数量级的：一篇普通文档里，样式变化点通常在几十到几百处，而不是几万处。于是<strong>两万次调用变成几十到几百次</strong>。有个细节值得划线：碰到图片、表格、控件这类非文本元素时，代码会立刻调一次 <code>complete()</code>——因为它们不走文本管线，不收口的话，后面那批字会「接」在错误的位置上。</p>
+
+    <p class="note"><b>为什么不能合并不连续的字？</b>因为 <code>fillText</code> 的签名决定了：一次调用只能画一串从同一个起点开始、依次排下去的文字。它画不了「第 1 个字在 x=10、第 2 个字跳到 x=200」。所以合并只能发生在位置连续、样式相同的字符上——行内的每一次对齐调整、每一个上标、每一个行内空格缩进，都是一次强制收口。</p>
+
+    <div class="pull">合并绘制的核心不是「少画」，是<b>把「参数相同」这个事实识别出来，让图形层一次处理完。</b></div>
+
+    <h3>但合并解决不了「画多少」的问题</h3>
+    <p>合并把「两万次 → 几十次」解决了，可它没解决另一件事：<strong>这两万字里，用户眼前只有两三页。</strong>三十页文档全部画一遍，画完的二十七页在屏幕外面安静地烧着 CPU。</p>
+    <p>所以第二招是「画哪一页」。标本项目的做法干净利落——给每个页 canvas 挂一个 <code>IntersectionObserver</code>，谁进视口就画谁：</p>
+
+    <div class="code"><div class="code-bar"><b>分页懒渲染（真实源码，节选）</b><span>Draw.ts · _lazyRender</span></div>
+<pre><span class="k">private</span> <span class="f">_lazyRender</span>() {
+  <span class="k">this</span>._disconnectLazyRender();
+  <span class="k">this</span>.lazyRenderIntersectionObserver = <span class="k">new</span> <span class="f">IntersectionObserver</span>(entries => {
+    entries.<span class="f">forEach</span>(entry => {
+      <span class="k">if</span> (entry.isIntersecting) {
+        <span class="k">const</span> index = Number(entry.target.dataset.index);
+        <span class="k">this</span>.<span class="f">_drawPage</span>({ pageNo: index });   <span class="c">// 只画进视口的这页</span>
+      }
+    });
+  });
+  <span class="k">this</span>.pageList.<span class="f">forEach</span>(el =&gt; <span class="k">this</span>.lazyRenderIntersectionObserver.<span class="f">observe</span>(el));
+}</pre></div>
+
+    <p>有意思的是源码里的一个条件分支：<code>isLazy && isPagingMode</code>——懒渲染只在分页模式下开启，连页模式（像网页那样连续滚动、没有「页」的概念）必须立即渲染。旁边留着一行注释：「连续页因为有高度的变化会导致canvas渲染空白，需立即渲染，否则会出现闪动」。<strong>性能优化从来不是免费的：懒渲染省下的 CPU，要用偶尔的空白闪动来还；连页模式的正确性，要用全量渲染来买。</strong>知道什么时候不该优化，比知道怎么优化更值钱。</p>
+
+    <h3>DPR：一个数字决定清晰度，也决定显存</h3>
+    <p>canvas 有一个反直觉的地方：<strong>内部像素尺寸</strong>和 <strong>CSS 显示尺寸</strong>是两回事。CSS 里写 <code>width: 794px</code>，但 canvas 的 <code>width</code> 属性如果是 794，在 2 倍屏上会被拉伸两倍显示——糊。正确做法是把内部尺寸放大 DPR 倍，再用 CSS 缩回去：</p>
+
+    <div class="code"><div class="code-bar"><b>设备像素比（真实源码，节选）</b><span>Draw.ts · setPageDevicePixel</span></div>
+<pre><span class="k">const</span> dpr = <span class="k">this</span>.<span class="f">getPagePixelRatio</span>();     <span class="c">// 默认即 window.devicePixelRatio</span>
+<span class="k">this</span>.pageList.<span class="f">forEach</span>((p, i) => {
+  p.width  = width * dpr;     <span class="c">// 内部：真实像素</span>
+  p.height = height * dpr;
+  p.style.width  = <span class="s">`${width}px`</span>;   <span class="c">// 外部：CSS 尺寸</span>
+  p.style.height = <span class="s">`${height}px`</span>;
+  <span class="k">this</span>.<span class="f">_initPageContext</span>(<span class="k">this</span>.ctxList[i]);  <span class="c">// ← 尺寸变了，上下文被重置</span>
+});</pre></div>
+
+    <p>这段代码里最容易漏的是最后那行。<strong>改 canvas 的 width/height 会把整个上下文状态清空</strong>——变换矩阵、字号、颜色、裁剪区，全部归零。所以每次改尺寸都必须重新初始化上下文。漏掉的症状极其诡异：改一次纸张大小，文字全部偏移、字号错乱、颜色变回黑。代码看起来完全正确，bug 却真实存在——因为「重置」发生在你看不见的地方。</p>
+    <p>还有一层：DPR 是会变的。把窗口从 1 倍屏拖到 2 倍屏，<code>devicePixelRatio</code> 就变了。标本项目专门监听了 <code>matchMedia('(resolution: ${dpr}dppx)')</code> 的变化事件来重设画布。这类「窗口跨屏拖动」是测试编辑器时最容易漏的场景——在公司 1 倍屏开发，用户在 3 倍屏上用，文字糊成一团。</p>
+    <p>显存账也要在这里算：A4 纸 794×1123 CSS 像素，DPR 2 下内部尺寸 1588×2246，RGBA 四字节，<strong>一页 14.3MB</strong>。一百页文档，光画布就 1.4GB——懒渲染只省绘制不省显存，这笔账第六章接着算。</p>
+
+    <div class="demo" id="d2">
+<div class="demo-head">
+        <span class="demo-tag">DEMO 02 · PAINT</span>
+        <span class="demo-title">绘制合并台<span class="hint">切换合并开关，数一数 fillText 被调用了多少次</span></span>
+      </div>
+      <div class="demo-body">
+        <div class="controls">
+          <div class="ctl" style="flex:2 1 240px">
+            <label>段落 <b id="d2-plen">0 字</b></label>
+            <select id="d2-text">
+              <option value="plain">纯文本一段（样式全同）</option>
+              <option value="mixed" selected>混排：加粗 + 朱色强调</option>
+              <option value="dense">密集混排：每 3 字换一次样式</option>
+            </select>
+          </div>
+          <div class="ctl" style="flex:1 1 150px">
+            <label>字号 <b id="d2-fs">15</b></label>
+            <input type="range" id="d2-fs-in" min="12" max="24" step="1" value="15"/>
+          </div>
+          <div class="ctl-btn">
+            <label class="switch"><input type="checkbox" id="d2-merge" checked/>合并同样式连续字</label>
+          </div>
+        </div>
+        <div class="pt-wrap">
+          <div>
+            <div class="pt-page">
+              <canvas id="d2-canvas" width="480" height="150" style="width:100%;height:auto;display:block"></canvas>
+              <div class="pt-runs" id="d2-runs"></div>
+            </div>
+            <div class="pt-legend">
+              <span><b class="a">红框</b>＝逐字单独调用</span>
+              <span><b class="b">绿框</b>＝合并后的一批</span>
+            </div>
+          </div>
+          <div class="pt-side">
+            <h5>PAINT STATS</h5>
+            <div class="pt-px">fillText 调用 <b id="d2-calls">0</b> 次</div>
+            <div class="pt-bar"><i id="d2-bar1" style="width:0"></i><i class="b2" id="d2-bar2" style="width:0"></i></div>
+            <div class="hintline">上段蓝条＝不合并（<span id="d2-naive">0</span> 次）／下段绿条＝当前模式（<span id="d2-now">0</span> 次）</div>
+            <div class="pt-crect">
+              <div>批次<b id="d2-batch">0</b></div>
+              <div>平均每批字数<b id="d2-avg">0</b></div>
+              <div>字体切换<b id="d2-sw">0</b></div>
+              <div>颜色切换<b id="d2-cl">0</b></div>
+            </div>
+            <div class="hintline" id="d2-note"></div>
+          </div>
+        </div>
+        <div class="hintline" style="margin-top:11px">模型说明：这里是真的在画 canvas（不是模拟）。字宽用与 DEMO 01 相同的确定性模型；「批次」按真实合并规则（font + color 双键 + 位置连续）切分。切到「密集混排」，合并几乎失效——样式越花，合并收益越小，这条规律由内容决定，不由你决定。</div>
+      </div>
+      <div class="demo-foot">把「密集混排」和「纯文本」来回切两次：同样多的字，<b>调用次数差出十倍以上</b>。合并收益＝样式重复度——这就是为什么规范排版比花哨排版跑得快。</div>
+    </div>
+
+    <p>到这里，字终于变成像素了。但用户不只看，还要<strong>点</strong>。而「点」比「画」难得多——因为它要求你从像素反推回数据。</p>
+  </div>
+</section>
+
+<section class="chapter" id="ch4">
+  <div class="ch-head">
+    <div class="ch-num"><b>04</b>CHAPTER<br/>20:00</div>
+    <div class="ch-title">
+      <h2>光标与那一「下」</h2>
+      <p>命中测试是坐标表的逆向解读：鼠标坐标怎么变回字符下标，以及光标为什么是一个 DOM 元素而不是画上去的</p>
+    </div>
+  </div>
+  <div class="ch-body">
+    <p class="lede">这一章讲的是整篇里最「反直觉」的两个东西。第一个：光标。第二个：点击。它们都是「从像素反推数据」的逆向工程——而逆向工程的质量，用户用一个词就能评价：<strong>手感</strong>。</p>
+
+    <h3>光标：为什么不用 canvas 画，而用一个 div</h3>
+    <p>第一反应肯定是「光标也画在 canvas 上」：在正确的位置画一条竖线不就完了。真做一遍就会发现三个无解的问题：</p>
+    <ul>
+      <li><strong>它要闪。</strong>canvas 上做闪烁意味着每 500ms 重绘一次——而重绘的粒度是整个页面（第 3 章的结论）。为了一个光标的闪烁反复重画整篇文档，荒谬。</li>
+      <li><strong>它要跟着滚动走。</strong>canvas 的内容不随滚动重绘，画在里面的光标会跟文字错位。</li>
+      <li><strong>它要接输入法。</strong>中文 IME 需要一个真实的、可聚焦的 DOM 元素做组合输入（composition）和候选框定位。canvas 不能聚焦。</li>
+    </ul>
+    <p>所以真实做法是三层分工：<strong>canvas 画字，一个绝对定位的 DOM div 画光标，一个隐藏的输入元素接键盘和 IME。</strong>标本项目里，光标就是 <code>document.createElement('div')</code> 造出来的一个普通元素，位置由坐标表算出：</p>
+
+    <div class="code"><div class="code-bar"><b>光标的坐标计算（真实源码，节选）</b><span>Cursor.ts · drawCursor</span></div>
+<pre><span class="c">// 光标高度 = 字高 + 上下各留一点余量（视觉上比字框略高，更像原生光标）</span>
+<span class="k">const</span> increaseHeight = Math.<span class="f">min</span>(metrics.height / <span class="n">4</span>, defaultOffsetHeight);
+<span class="k">const</span> cursorHeight   = metrics.height + increaseHeight * <span class="n">2</span>;
+<span class="k">const</span> descent = metrics.boundingBoxDescent &lt; <span class="n">0</span> ? <span class="n">0</span> : metrics.boundingBoxDescent;
+<span class="k">const</span> cursorTop = leftTop[<span class="n">1</span>] + ascent + descent - (cursorHeight - increaseHeight);
+<span class="c">// 插入点：普通情况取「这个字的右边框」，行首插入点取左边界</span>
+<span class="k">const</span> cursorLeft = hitLineStartIndex ? leftTop[<span class="n">0</span>] : rightTop[<span class="n">0</span>];
+
+cursorDom.style.width  = <span class="s">`${width * scale}px`</span>;
+cursorDom.style.left   = <span class="s">`${cursorLeft}px`</span>;
+cursorDom.style.top    = <span class="s">`${cursorTop}px`</span>;
+cursorDom.style.height = <span class="s">`${cursorHeight}px`</span>;</pre></div>
+
+    <p>三处细节值得盯住。第一：<strong><code>cursorLeft</code> 取的是 <code>rightTop[0]</code></strong>——光标画在「这个字的右边框」。因为光标表示插入点，插入点在第 n 个字之后，就是第 n 个字的右边；而行首没有「前一个字」，要用 <code>leftTop[0]</code>，这就是 <code>hitLineStartIndex</code> 分支的含义。第二：<strong><code>descent &lt; 0 ? 0 : descent</code></strong>——某些字符的墨迹下界是负数，不兜住光标就会往上飘。第三：光标高度刻意比字框高一点（上下各加四分之一字高、封顶一个常数），纯视觉考量，但少了这点余量用户就会说「光标太局促」。</p>
+    <p>闪烁也不是 CSS 一挂了事。源码的逻辑是：每次光标移动，先保持<strong>实心</strong>（重置一个 500ms 的 setTimeout），500ms 内没有动静才加一个 CSS 动画类开始闪。因为<strong>输入中的光标必须实心</strong>——用户每敲一个键光标都闪一下会晃眼。CSS 动画只是「静止状态」的装饰，输入事件才是它的开关。</p>
+
+    <p class="note"><b>输入法为什么是编辑器的鬼门关。</b>IME 组合期间，用户敲的是拼音，上屏的是汉字，中间还有候选框要跟着光标走。canvas 编辑器必须：① 让隐藏输入元素停在光标坐标上（否则候选框飘到屏幕左上角）；② composition 期间不重排（否则拼音字母被排进正文）；③ compositionend 时一次性插入整段汉字。三步任何一步错，中文用户第一分钟就会卸载你。</p>
+
+    <h3>命中测试：从 (x, y) 找回字符下标</h3>
+    <p>用户点一下，你拿到的是相对画布的坐标。要变成「第 137 个字符」，必须查表。表就是第 2 章顺手生成的坐标表——每个字符一条记录，含四个角的坐标。查询本体是一次朴素的线性扫描：</p>
+
+    <div class="code"><div class="code-bar"><b>命中：线性扫描 + 矩形判定（真实源码，节选）</b><span>Position.ts · getPositionByXY</span></div>
+<pre><span class="k">for</span> (<span class="k">let</span> j = <span class="n">0</span>; j &lt; positionList.length; j++) {
+  <span class="k">const</span> { pageNo, left,
+          coordinate: { leftTop, rightTop, leftBottom } } = positionList[j];
+  <span class="k">if</span> (pageNo !== positionNo) <span class="k">continue</span>;      <span class="c">// 只在当前页找</span>
+  <span class="k">if</span> (pageNo &gt; positionNo) <span class="k">break</span>;          <span class="c">// 按页排过序，可以提前断</span>
+  <span class="c">// 矩形包含判定（left 是列表缩进，命中区从「缩进后」起算）</span>
+  <span class="k">if</span> (leftTop[<span class="n">0</span>] - left &lt;= x && rightTop[<span class="n">0</span>] &gt;= x
+   && leftTop[<span class="n">1</span>] &lt;= y && leftBottom[<span class="n">1</span>] &gt;= y) {
+    <span class="k">return</span> { index: j };                    <span class="c">// 命中第 j 个字符</span>
+  }
+}</pre></div>
+
+    <p>看着简单，但真正的复杂性全在「<strong>没命中</strong>的时候」。用户会点行尾右边的空白、点两行之间的缝隙、点页面下方的空白区。这些情况下不能返回「未命中」就完事——光标必须<strong>就近吸附</strong>到最合理的位置。标本项目的兜底逻辑值得整段读：先拿「每行最后一个字」的标记（<code>isLastLetter</code>）反查这个 y 落在哪一行的纵向范围里，再在这一行里按 x 判断：<code>x &lt; 行首</code> 就吸附行首，否则落到该行最后一个字符。这就是你在所有编辑器里都感受过、却从没想过的东西：<strong>点在行尾右侧的空白，光标会乖乖跳到那一行的末尾。</strong></p>
+    <p>还有一层顺序问题：浮动图片（衬于文字下方/浮于文字上方）的命中要先于正文、或后于正文——<strong>必须和绘制顺序一致</strong>，否则「看见的顶层」和「点中的顶层」不是同一个东西。又一次：三个消费者必须对同一份数据达成一致。</p>
+
+    <div class="pull">命中测试是唯一一处「几何 → 数据」的逆向工程。<b>它错一个边界条件，用户就会说这个编辑器「手感不对」——而且说不清哪不对。</b></div>
+<h3>「手感」在技术上的构成</h3>
+    <p>下面这张表是我认为最能区分「真做过」与「读过文章」的部分——每一条都是能让人当场沉默的踩坑记录：</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>症状</th><th>技术原因</th><th>修法</th></tr></thead>
+        <tbody>
+          <tr><td>点字中间总选到右边那个字</td><td>命中后直接取该字符下标，没按 x 相对中点的位置分前后</td><td>x 过字符中点 → 吸附到字后；不过 → 吸附到字前</td></tr>
+          <tr><td>点行尾空白，光标乱跳</td><td>没命中任何字符，直接用了兜底下标</td><td>先按 y 定位行（isLastLetter 反查），再按 x 吸附行尾</td></tr>
+          <tr><td>双击选词，选中的是整段</td><td>没有词边界索引，词边界退化成段落边界</td><td>维护字符 → 词的边界表（中英文规则不同）</td></tr>
+          <tr><td>悬停在图片上光标不变</td><td>浮动图不参与行排版，正文坐标表里没有它</td><td>浮动元素单独一张位置表，命中顺序与绘制顺序一致</td></tr>
+          <tr><td>移动端长按选字选不中</td><td>触摸坐标没减滚动偏移、没除缩放系数</td><td>统一换算到画布 CSS 像素空间再进坐标表</td></tr>
+          <tr><td>光标看着比文字高半行</td><td>忘了减 descent，或没考虑 scale</td><td>光标 top 按基线反算，不按字框顶</td></tr>
+          <tr><td>输入拼音时正文乱跳</td><td>composition 期间触发了重排</td><td>组合期间冻结排版，compositionend 一次性插入</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="demo" id="d3">
+      <div class="demo-head">
+        <span class="demo-tag">DEMO 03 · HIT TEST</span>
+        <span class="demo-title">命中测试台<span class="hint">在纸面上点一下，看两种算法怎么找到那个字</span></span>
+      </div>
+      <div class="demo-body">
+        <div class="controls">
+          <div class="ctl-btn">
+            <div class="hit-mode" id="d3-mode">
+              <button data-mode="scan" aria-pressed="true">逐个扫描</button>
+              <button data-mode="binary" aria-pressed="false">行索引 + 吸附</button>
+            </div>
+          </div>
+          <div class="ctl" style="flex:0 1 170px">
+            <label class="switch" style="margin-bottom:2px"><input type="checkbox" id="d3-grid"/>显示坐标网格</label>
+          </div>
+          <div class="ctl-btn">
+            <button class="ghost" id="d3-reset">重置</button>
+          </div>
+        </div>
+        <div class="hit-wrap">
+          <div class="hit-page" id="d3-page">
+            <div class="hit-cross" id="d3-cross" style="display:none"></div>
+          </div>
+          <div class="hit-side">
+            <h5>HIT RESULT</h5>
+            <div class="hit-big"><span id="d3-index">—</span><small>命中的字符下标（⁺＝插入点在字后，⁻＝字前）</small></div>
+            <div class="hit-log" id="d3-log">在左边纸面上点一下。</div>
+            <div class="hintline">红竖线＝光标落点。点行尾右侧空白、点两行缝隙、点页面底部——看吸附规则怎么兜底。</div>
+          </div>
+        </div>
+        <div class="hintline" style="margin-top:11px">模型说明：纸面上的字是真实 DOM 文本，坐标表由 <code>getBoundingClientRect</code> 实测构建（等价于真实实现的 positionList），命中判定与真实源码同一套矩形条件。「逐个扫描」模式会真的从第 0 个字符遍历——那正是大文档里每次点击的真实成本。</div>
+      </div>
+      <div class="demo-foot">切到「逐个扫描」再点右下角空白：日志会滚出几十行 no，最后给出一次吸附。这就是为什么认真实现都要先按行索引——<b>行数远少于字符数</b>，先把 y 定位到行，再在行内做几次比较就够了。</div>
+    </div>
+
+    <p>光标和命中都对了，用户会觉得「这个编辑器能用」。然后他会打字，会按 Ctrl+Z，会刷新页面。从这一刻起，你面对的是<strong>状态</strong>——状态比几何难得多，因为它有时间维度。</p>
+  </div>
+</section>
+
+<section class="chapter" id="ch5">
+  <div class="ch-head">
+    <div class="ch-num"><b>05</b>CHAPTER<br/>27:40</div>
+    <div class="ch-title">
+      <h2>撤销栈与自动保存的账</h2>
+      <p>每一步一份全文档快照，和那个几乎没人愿意提的合并问题——两个机制长得像，代价完全不同</p>
+    </div>
+  </div>
+  <div class="ch-body">
+    <p class="lede">用户已经能看、能点、能打字了。接下来他会做两件人类必然做的事：按 Ctrl+Z；关掉页面再回来，期待内容还在。前者是撤销，后者是持久化。这两件事在实现上看起来是同一类问题——「记住过去」——但它们<strong>一个在内存里记账，一个在磁盘上记账</strong>，坑完全不一样。</p>
+
+    <h3>撤销栈：一个闭包数组</h3>
+    <p>标本项目的撤销栈，语法上简单到让人放松警惕：</p>
+
+    <div class="code"><div class="code-bar"><b>HistoryManager（真实源码，节选）</b><span>栈里存的是函数，不是数据</span></div>
+<pre><span class="k">export class</span> HistoryManager {
+  <span class="k">private</span> undoStack: Array&lt;Function&gt; = [];
+  <span class="k">private</span> redoStack: Array&lt;Function&gt; = [];
+
+  <span class="f">public</span> <span class="f">undo</span>() {
+    <span class="k">if</span> (<span class="k">this</span>.undoStack.length &gt; <span class="n">1</span>) {
+      <span class="k">const</span> pop = <span class="k">this</span>.undoStack.<span class="f">pop</span>()!;
+      <span class="k">this</span>.redoStack.<span class="f">push</span>(pop);
+      <span class="k">if</span> (<span class="k">this</span>.undoStack.length) {
+        <span class="k">this</span>.undoStack[<span class="k">this</span>.undoStack.length - <span class="n">1</span>](); <span class="c">// 执行「上一个状态」</span>
+      }
+    }
+  }
+
+  <span class="f">public</span> <span class="f">execute</span>(fn: Function) {
+    <span class="k">this</span>.undoStack.<span class="f">push</span>(fn);
+    <span class="k">if</span> (<span class="k">this</span>.redoStack.length) <span class="k">this</span>.redoStack = []; <span class="c">/* 新操作清空重做 */</span>
+    <span class="k">while</span> (<span class="k">this</span>.undoStack.length &gt; <span class="k">this</span>.maxRecordCount) {
+      <span class="k">this</span>.undoStack.<span class="f">shift</span>();                 <span class="c">/* 超上限，丢最老的 */</span>
+    }
+  }
+}</pre></div>
+
+    <p>栈里存的不是「逆操作」，而是<strong>「怎么回到那个状态」——一个闭包</strong>。入栈的瞬间，调用方把整份文档克隆一份，然后把「恢复这份克隆」包装成函数塞进栈里：</p>
+
+    <div class="code"><div class="code-bar"><b>入栈：快照整份文档（真实源码，节选）</b><span>Draw.ts · submitHistory</span></div>
+<pre><span class="f">public</span> <span class="f">submitHistory</span>(curIndex) {
+  <span class="k">const</span> oldElementList = <span class="f">getSlimCloneElementList</span>(<span class="k">this</span>.elementList);
+  <span class="k">const</span> oldHeader = <span class="f">getSlimCloneElementList</span>(<span class="k">this</span>.header.<span class="f">getElementList</span>());
+  <span class="k">const</span> oldRange  = <span class="f">deepClone</span>(<span class="k">this</span>.range.<span class="f">getRange</span>());
+  <span class="k">const</span> oldContext = <span class="f">deepClone</span>(<span class="k">this</span>.position.<span class="f">getPositionContext</span>());
+  <span class="k">const</span> pageNo = <span class="k">this</span>.pageNo, zone = <span class="k">this</span>.zone.<span class="f">getZone</span>();
+  <span class="k">this</span>.historyManager.<span class="f">execute</span>(() => {
+    <span class="k">this</span>.zone.<span class="f">setZone</span>(zone);
+    <span class="k">this</span>.<span class="f">setPageNo</span>(pageNo);
+    <span class="k">this</span>.position.<span class="f">setPositionContext</span>(<span class="f">deepClone</span>(oldContext));
+    <span class="k">this</span>.header.<span class="f">setElementList</span>(<span class="f">deepClone</span>(oldHeader));
+    <span class="c">// ……正文同理恢复，然后全量 render()</span>
+  });
+}</pre></div>
+
+    <p>注意 <code>getSlimCloneElementList</code> 这个名字——「瘦身克隆」。它克隆整份元素列表时<strong>主动丢掉 <code>metrics</code> 和 <code>style</code> 两个字段</strong>：前者是排版结果，后者是绘制用的字体串，都能从原始数据重新推导。快照只存「因」，不存「果」——这一个细节，是快照方案还能活着的主要原因。默认上限 <code>historyMaxRecordCount: 100</code>，构造函数里那个 <code>+1</code>（忽略第一次历史记录）也是个诚实的细节：初始状态不该算成一步可撤销的操作。</p>
+
+    <p>这套设计的三个后果，值得一条条摆出来：</p>
+    <ul>
+      <li><strong>简单到不会错。</strong>没有「操作逆运算」，没有「相邻操作合并」的规则，撤销就是恢复一份快照。任何奇怪的编辑序列都能正确回退，因为根本不推理——只复制。</li>
+      <li><strong>内存与「文档大小 × 步数」成正比。</strong>两万字的文档，一份瘦身克隆约 2MB（每个字符一个对象），100 步 = 200MB。这是第 4 条 JD「内存占用高」里最隐蔽的一笔，因为它不发生在绘制层，性能面板的火焰图上它藏在堆内存快照里。</li>
+      <li><strong>撤销一次 = 全量重排重绘一次。</strong>恢复快照后调 <code>render()</code>，两万字文档按一次 Ctrl+Z 就是一次完整排版。撤销比打字还卡，就是这么来的。</li>
+    </ul>
+
+    <div class="pull">快照式撤销的哲学：<b>不推理历史，只复制过去。</b>它用内存买正确性——对富文本来说，这笔买卖通常是划算的。</div>
+
+    <h3>那个没人愿意提的合并问题</h3>
+    <p>更难的问题在产品侧：用户连续敲 40 个键，每个键算一步吗？如果算，Ctrl+Z 一次只退一个字符，退完 40 个字要按 40 次——任何真实产品里都不可接受。浏览器原生输入框的行为是<strong>把一段连续输入合并成一次撤销</strong>。合并的判定条件，业内共识是四条：</p>
+    <ul>
+      <li><strong>时间窗</strong>——两次编辑间隔小于 N 毫秒（常见 500ms～1s）就并成一步；</li>
+      <li><strong>语义窗</strong>——同类型操作才合并；插入图片必须单独成步；</li>
+      <li><strong>位置窗</strong>——光标移走了就断步，否则「改前面一段再改后面一段」会被并成一步，一次撤销毁掉两处编辑；</li>
+      <li><strong>断点</strong>——标点、空格、样式切换、输入法上屏，都是天然的「一步结束」。</li>
+    </ul>
+    <p>值得诚实指出的是：<strong>标本项目的 HistoryManager 里一条合并规则都没有</strong>——每次 <code>execute</code> 无脑 push。也就是说，打 100 个字就耗尽 100 步上限，最早的 1 步已经被丢掉。合并的责任被推给了调用方（每个触发 <code>render</code> 的入口自己决定要不要提交历史）。这不是设计失误，是把「撤销粒度」当成了<strong>产品决策</strong>而不是技术参数：协作编辑器、写作工具、表单类应用对「一步」的定义完全不同。</p>
+    <p class="note"><b>一个面试级的问题：为什么不用 diff/patch 记撤销？</b>因为富文本的「一个操作」在字符层面经常不是连续区间。一次「删除 + 粘贴」可能是「第 100–200 字符被替换」，语义上却是两个操作；基于 diff 的撤销会在复杂操作后产生「撤销了半个操作」的效果，用户立刻就能发现。快照法用内存换正确性，在这个场景下是清醒的选择。</p>
+<div class="demo" id="d4">
+      <div class="demo-head">
+        <span class="demo-tag">DEMO 04 · UNDO</span>
+        <span class="demo-title">撤销合并器<span class="hint">调时间窗与上限，看栈怎么长、内存怎么涨</span></span>
+      </div>
+      <div class="demo-body">
+        <div class="controls">
+          <div class="ctl" style="flex:1 1 160px">
+            <label>合并时间窗 <b id="d4-win">600</b> ms</label>
+            <input type="range" id="d4-window" min="0" max="2000" step="100" value="600"/>
+          </div>
+          <div class="ctl" style="flex:1 1 160px">
+            <label>撤销栈上限 <b id="d4-cap">100</b> 步</label>
+            <input type="range" id="d4-cap-in" min="5" max="200" step="5" value="100"/>
+          </div>
+          <div class="ctl" style="flex:1 1 150px">
+            <label>文档规模 <b id="d4-doc">20000</b> 字</label>
+            <input type="range" id="d4-doc-in" min="2000" max="60000" step="1000" value="20000"/>
+          </div>
+          <div class="ctl-btn">
+            <button class="run" id="d4-type">连续输入</button>
+            <button class="ghost" id="d4-break" disabled>移走光标</button>
+            <button class="ghost" id="d4-undo" disabled>Ctrl+Z</button>
+          </div>
+        </div>
+        <div class="uo-wrap">
+          <div class="uo-stage">
+            <div class="uo-text" id="d4-text"><span style="color:var(--faint)">点「连续输入」开始——每键间隔 180ms，标点强制断步。</span></div>
+            <div class="uo-stack">
+              <h5>UNDO STACK · 每根柱子 = 一份快照（绿＝合并过若干键，红＝最新）</h5>
+              <div class="uo-cells" id="d4-cells"></div>
+            </div>
+            <div class="hintline" style="margin-top:8px" id="d4-status">每敲一个键：判断是否落入合并窗 → 合并则改写栈顶，不合并则压入新快照。</div>
+          </div>
+          <div class="uo-side">
+            <h5>SNAPSHOT ACCOUNT</h5>
+            <div class="uo-kv">
+              <span>按键次数</span><b id="d4-keys">0</b>
+              <span>栈内快照</span><b id="d4-steps">0</b>
+              <span>栈内合并率</span><b id="d4-rate">0%</b>
+              <span>单份快照</span><b id="d4-size">0 KB</b>
+              <span>栈总内存</span><b id="d4-mem">0 KB</b>
+              <span>一次撤销代价</span><b id="d4-cost">0 ms</b>
+            </div>
+            <div class="uo-note" id="d4-note">每敲一个键：判断是否落入合并窗 → 合并则改写栈顶，不合并则压入新快照。</div>
+          </div>
+        </div>
+        <div class="hintline" style="margin-top:11px">模型说明：单份快照按 100 字节/字符估算（瘦身克隆的量级；两万字 ≈ 2MB，与实测同一量级）；「一次撤销代价」＝全量重排（约 0.06ms/千字）＋整页重绘（估 8ms）之和，用于展示数量级而非精确基准。时间轴是确定性的：每键 180ms，无随机数。</div>
+      </div>
+      <div class="demo-foot">把时间窗拉到 0：每键一步，栈瞬间吃满上限，<b>最早的历史被 shift() 丢掉</b>；拉到 2000ms：整段话只剩三四步，一次 Ctrl+Z 退掉一整句。<b>合并率与「一步该退多少」之间，是一条需要产品决策的曲线，不是技术参数。</b></div>
+    </div>
+
+    <h3>自动保存：从「记住过去」到「保证不丢」</h3>
+    <p>撤销栈在内存里，刷新就没了。持久化是另一套账。先交代一个也许让人意外的事实：<strong>标本项目（一个功能完备的 canvas 编辑器库）不做自动保存。</strong>我在源码里翻了三遍：<code>localStorage</code> 只出现在剪贴板兜底里——</p>
+
+    <div class="code"><div class="code-bar"><b>库里的 localStorage 只干一件事（真实源码）</b><span>utils/clipboard.ts</span></div>
+<pre><span class="k">export function</span> <span class="f">setClipboardData</span>(data) {
+  localStorage.<span class="f">setItem</span>(EDITOR_CLIPBOARD, JSON.<span class="f">stringify</span>({
+    text: data.text,
+    elementList: data.elementList     <span class="c">/* 富文本结构，跨页粘贴时还能带上样式 */</span>
+  }));
+}</pre></div>
+
+    <p>没有 IndexedDB，没有自动保存定时器，没有崩溃恢复，一处都没有。这不是遗漏，是<strong>边界划分</strong>：库不知道自己跑在什么环境里（本地单机？多用户协作？只读预览？），没资格替宿主做存储决策。它给出的是两样让你能自己做的东西：一个 <code>contentChange</code> 回调，和一份「取当前完整数据」的 API。<strong>JD 第 ⑤ 条考的其实是这条边界线两侧的知识都要有：库提供机制，宿主负责决策。</strong></p>
+
+    <h4>localStorage 能撑到哪一步</h4>
+    <p>「每次内容变化就 <code>localStorage.setItem</code>」是最直觉的自动保存，也是最先炸的。三个硬限制：它是<strong>同步 API</strong>，写 2MB 字符串会阻塞主线程几十毫秒，而且正好发生在用户打字的时刻；配额只有 <strong>5MB 左右</strong>，两万字文档序列化后 1–3MB，图片一进来（base64 膨胀 33%）立刻超，超限时 <code>setItem</code> <strong>同步抛异常</strong>，没接住就是白屏；它<strong>只有字符串</strong>，图片附件只能 base64，体积和 CPU 双输。</p>
+
+    <h4>IndexedDB 的正确姿势</h4>
+    <p>正解是 IndexedDB：异步、配额按磁盘比例给（通常几百 MB 起步）、能直接存 Blob（图片存二进制，不膨胀）。但它自带三个坑：写入是<strong>异步的</strong>，用户快速打字时多个保存任务并发，后发的可能先落地，必须用单调递增版本号或单写入队列；写入要<strong>节流合并</strong>，不能每次按键都写；要<strong>留两个版本</strong>，「自动保存草稿」和「上一次手动保存」各一份，否则一次误操作就把好内容覆盖了。</p>
+
+    <div class="code"><div class="code-bar"><b>最小可用的自动保存骨架</b><span>节流 + 关页兜底 + 版本号</span></div>
+<pre><span class="k">let</span> pending = <span class="k">null</span>, timer = <span class="k">null</span>, seq = <span class="n">0</span>;
+
+<span class="k">function</span> <span class="f">onContentChange</span>() {
+  pending = editor.<span class="f">getValue</span>();            <span class="c">/* 拿一份快照（还不序列化） */</span>
+  <span class="k">if</span> (timer) <span class="k">return</span>;
+  timer = <span class="f">setTimeout</span>(flush, <span class="n">1200</span>);          <span class="c">/* 静默 1.2s 才写 */</span>
+}
+
+<span class="k">async function</span> <span class="f">flush</span>() {
+  timer = <span class="k">null</span>;
+  <span class="k">if</span> (!pending) <span class="k">return</span>;
+  <span class="k">const</span> payload = pending; pending = <span class="k">null</span>;
+  <span class="k">await</span> db.<span class="f">put</span>(<span class="s">'draft'</span>, { seq: ++seq, data: payload, at: Date.now() });
+}
+
+<span class="c">/* 关页/切后台：最后一次机会。pagehide 比 beforeunload 可靠（移动端尤其） */</span>
+addEventListener(<span class="s">'pagehide'</span>, () => { <span class="k">if</span> (pending) flush(); });</pre></div>
+
+    <p>状态恢复则在保存的对面：重启后要恢复的不只是内容——<strong>光标位置、选区、滚动位置、撤销栈要不要恢复，各是一个产品决策</strong>。最低配置是内容 + 文档版本号；版本号的作用是迁移：编辑器升级改了数据结构时，老草稿要先过一遍迁移函数再进内存，否则打开旧文档就是一次静默的数据损坏。</p>
+    <p>到这里，单标签页的编辑器算是完整了。但真实用户会同时开三个标签页改同一份文档——下一章就是这笔烂账。</p>
+  </div>
+</section>
+
+<section class="chapter" id="ch6">
+  <div class="ch-head">
+    <div class="ch-num"><b>06</b>CHAPTER<br/>34:20</div>
+    <div class="ch-title">
+      <h2>三笔烂账：多标签页、内存、媒体</h2>
+      <p>JD 第 ④⑤⑥ 条的正面回答——三件事单独看都简单，放到同一份文档上就互相咬</p>
+    </div>
+  </div>
+  <div class="ch-body">
+    <p class="lede">到上一章为止，我们的编辑器还是「一个标签页里的孤岛」。真实用户不是这样的：他会开两个标签页对着改，会往文档里拖三十张照片，会把四万字的标书从头滚到尾。这三件事分别对应 JD 的第 ⑤④⑥ 条，而且它们<strong>互相咬</strong>：为省显存做的页 canvas 回收会伤媒体预览，为多标签做的同步会和自动保存打架，为媒体做的降采样又反过来救显存。</p>
+
+    <h3>第一笔：多标签页，谁说了算</h3>
+    <p>两个标签页打开同一份文档，各自内存里都有一份自己的副本。A 改了第三段，B 不知道；B 这时保存，A 的修改被覆盖。这就是「最后写入者胜出」——最常见的默认行为，也是最危险的，因为它<strong>静默丢数据</strong>：用户看不到任何报错，只是几天后发现那段话没了，而且无法证明是人的问题还是程序的问题。</p>
+    <p>解法有三档，成本完全不同：</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>方案</th><th>机制</th><th>防住什么</th><th>防不住什么</th></tr></thead>
+        <tbody>
+          <tr><td><b>互斥锁</b><br/><span class="hintline">最便宜</span></td><td>进编辑页先抢锁（<code>Web Locks API</code> 或 localStorage 心跳仲裁），抢不到进只读</td><td>同时编辑——直接不让它发生</td><td>假死的标签页占着锁不放（要做心跳超时）</td></tr>
+          <tr><td><b>乐观并发</b><br/><span class="hintline">推荐默认</span></td><td>每个标签页记住加载时的版本号，保存时带上 <code>baseVersion</code>；版本已变就弹「另一标签页已更新」</td><td>静默覆盖——冲突时给人看，让人选</td><td>用户选「用我的版本」时仍会覆盖（但至少是知情的）</td></tr>
+          <tr><td><b>实时协同</b><br/><span class="hintline">最贵</span></td><td><code>BroadcastChannel</code> / <code>storage</code> 事件广播每次变更，OT 或 CRDT 合并</td><td>几乎全部——那就是协作编辑产品了</td><td>复杂度本身：CRDT 是独立领域，不是「加个库」</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>对多数单机产品，正确答案是第二档，再加一个关键细节：<strong>收到冲突不要自动合并，把对方的版本拉过来让用户看、让用户选。</strong>富文本的自动合并和撤销合并是同一类难题——「两处编辑」在字符层面可能并不冲突，在语义上却已经互相矛盾。另外，Web Locks API 值得单独一提，它是浏览器原生的互斥锁，十行代码就能防住双开：</p>
+
+    <div class="code"><div class="code-bar"><b>Web Locks：十行代码防双开</b><span>锁粒度是「这份文档」，不是整个应用</span></div>
+<pre><span class="k">await</span> navigator.locks.<span class="f">request</span>(<span class="s">`doc:${docId}`</span>, <span class="k">async</span> (lock) => {
+  <span class="k">if</span> (!lock) {                       <span class="c">/* 拿不到锁：别人正在编辑 */</span>
+    enterReadonly(<span class="s">'该文档已在另一个标签页打开'</span>);
+    <span class="k">return</span>;
+  }
+  <span class="k">await</span> runEditor();                 <span class="c">/* 正常编辑；标签页关闭自动释放 */</span>
+});</pre></div>
+
+    <h3>第二笔：内存，页 canvas 是最大的不动产</h3>
+    <p>第 3 章说过懒渲染：只画进视口的页。但有个细节当时按下没表——<strong>懒渲染省的是绘制，不省画布本身</strong>。每个页 canvas 在创建时就按「CSS 尺寸 × DPR」的内部尺寸申请了位图。算一笔账：A4 是 794×1123 CSS 像素，DPR 2 下内部 1588×2246，RGBA 四字节，<strong>一页 14.3MB</strong>；一百页文档，光画布就 1.4GB。懒渲染只保证「不画」，画布的位图仍躺在显存里。</p>
+    <p>所以认真的实现还要加一层：<strong>对远离视口的页，主动清零位图</strong>（<code>canvas.width = canvas.height = 0</code>），只留占位元素维持滚动条高度，滚回来时重画。没有现成 API 提醒你做这一层，只有内存曲线会提醒你。这也解释了第 3 章那个「连页模式必须立即渲染」的取舍的另一面：连页高度会变，位图回收的时机算不准，索性不省。</p>
+    <p>显存之外还有两块，都是第 5 章埋的种子：</p>
+    <ul>
+      <li><strong>撤销栈</strong>——100 步 × 全文档快照，两万字 ≈ 200MB。上限应该随文档规模自适应：小文档 100 步，大文档降到 30 步。这是产品该做的自动降级，不是技术债。</li>
+      <li><strong>字宽缓存</strong>——键是「字符 + 字体串」，文档里出现过的组合全部留底。正常几十到几百 KB；但如果用户把表格里每个字都手动设成不同字号（真的会发生），缓存就膨胀。给缓存设一个上限（比如一万条，超了清最老的）是一行代码，但不能不写。</li>
+    </ul>
+    <p>排查这类问题的顺序值得背下来：性能面板看火焰图（排版/绘制/脚本各占多少）→ 堆快照对比两次操作之间的增量（快照栈、缓存、监听器）→ <code>Performance Monitor</code> 看 GPU 内存。JD 第 ④ 条那句「能排查页面卡顿、内存占用高的问题」，考的就是这套流程的肌肉记忆。</p>
+<h3>第三笔：媒体文件，进编辑器之前的五道关</h3>
+    <p>JD 第 ⑥ 条「图片、视频等媒体文件的前端处理」，在编辑器语境里的真实含义是：用户把一张 12MB 的手机原图拖进文档，编辑器不能卡死、显存不能爆炸、导出不能糊。这中间是五道关卡，每道都有标准答案：</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>关卡</th><th>要防什么</th><th>标准做法</th></tr></thead>
+        <tbody>
+          <tr><td><b>① 读取</b></td><td>同步 API 卡主线程</td><td><code>File.arrayBuffer()</code> / Blob 全异步，别用 FileReader 的同步思维</td></tr>
+          <tr><td><b>② 解码</b></td><td>一张 4000×3000 的 JPEG 解码后占 48MB 内存，且解码同步</td><td><code>createImageBitmap(blob)</code>，可带 <code>resizeWidth</code> 让浏览器解码时顺手降采样</td></tr>
+          <tr><td><b>③ 方向</b></td><td>手机竖拍的照片 EXIF 标了旋转，直接画会躺着</td><td><code>createImageBitmap(blob, { imageOrientation: 'from-image' })</code>——别自己解析 EXIF 字节，让浏览器做</td></tr>
+          <tr><td><b>④ 降采样</b></td><td>显示宽度只有 554px 的图，存 4000px 是纯浪费</td><td>缩到「显示宽 × DPR × 1.2 倍余量」再 <code>convertToBlob({ type: 'image/webp', quality: 0.85 })</code></td></tr>
+          <tr><td><b>⑤ 存储</b></td><td>base64 进 localStorage 膨胀 33% 且超配额</td><td>图片以 Blob 存 IndexedDB，文档里只存引用 id，导出时再合并</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>第②③④步如果放主线程做，一张大图就是 200ms 的卡顿；用户一次拖十张，就是两秒白屏。所以这五道关的正确位置是 <strong>Worker</strong>：<code>createImageBitmap</code>、<code>OffscreenCanvas.convertToBlob</code> 在 Worker 里都可用，主线程只把 File 丢过去、把结果收回来。第 1 章那张账单里没有这一行，但它是「媒体文件的前端处理经验」的全部实务。</p>
+    <p>视频则要克制得多，准则一句话：<strong>永远不要把视频「放进」文档数据里。</strong>文档只存引用（文件 id + 时长 + 分辨率），预览帧用 <code>&lt;video&gt;</code> seek 到 0.1 秒抓一帧画上封面。视频动辄几百 MB，IndexedDB 写一次痛一次，而 <code>&lt;video&gt;</code> 元素自己会流式加载——把流式加载的东西复制进内存，等于亲手拆掉浏览器已经做好的优化。</p>
+
+    <div class="pull">媒体处理准则：<b>文档存引用，不存内容；解码放 Worker，不占主线程；显示用多大，就存多大。</b></div>
+
+    <p>三笔账互相咬合的样子，值得再看一眼：媒体的降采样（第三笔）救了显存（第二笔）；多标签页的互斥锁（第一笔）让自动保存不必处理并发写入（第二笔的存储层）；撤销栈的自适应上限（第二笔）又取决于「当前是谁在编辑」（第一笔的锁状态）。<strong>JD 把这三条写成三行，是因为它们在实际工程里就是同一个礼拜里先后爆发的三个问题。</strong></p>
+    <p>最后一章，把全部内容收成一张能带走的清单。</p>
+  </div>
+</section>
+
+<section class="chapter" id="ch7">
+  <div class="ch-head">
+    <div class="ch-num"><b>07</b>CHAPTER<br/>41:30</div>
+    <div class="ch-title">
+      <h2>一张自检清单</h2>
+      <p>面试可以照着问，自己也可以照着做——二十六个问题里能答上二十个，这条 JD 你就算接住了</p>
+    </div>
+  </div>
+  <div class="ch-body">
+    <p class="lede">写到这里可以收束了。下面这张清单按 JD 的四条要求分组，每一项都在正文里出现过、且都能在解剖的源码里找到对应物。它的用法有两种：面试前过一遍防冷场；或者——更狠的用法——<strong>挑一个周末，把打勾的行亲手做出来。</strong>做过一遍的人和不曾做过的人，聊十分钟就能分辨。</p>
+
+    <h3>第 ③ 条 · 可视化编辑器本体</h3>
+    <div class="tablewrap">
+      <table>
+        <tbody>
+          <tr><td class="num">01</td><td>文档模型是扁平字符数组还是块树？两种模型下，「在表格单元格里插入一段带样式文字」分别要动几处数据结构？</td></tr>
+          <tr><td class="num">02</td><td><code>measureText</code> 的缓存键是什么？为什么字体串必须进键？键设计错会出现什么症状？</td></tr>
+          <tr><td class="num">03</td><td>行高为什么用基准字而不是每个字符自己的墨迹高度？什么场景下基准字方案会露馅？</td></tr>
+          <tr><td class="num">04</td><td>中文避头尾需要哪些数据结构？英文整词不拆的判定发生在折行的哪一步？</td></tr>
+          <tr><td class="num">05</td><td>连续同样式的字符合并成一次 <code>fillText</code>，收口的触发条件有哪几种？漏掉一种会看到什么？</td></tr>
+          <tr><td class="num">06</td><td>光标为什么是 DOM 元素？它的高度为什么比字框高一点？什么时候必须保持实心？</td></tr>
+          <tr><td class="num">07</td><td>点在行尾右侧的空白处，光标落在哪？这个「就近吸附」要分几种情况兜底？</td></tr>
+          <tr><td class="num">08</td><td>选区高亮画在哪一层？跨页选区、反向拖选分别怎么处理？</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>第 ④ 条 · Canvas 与性能</h3>
+    <div class="tablewrap">
+      <table>
+        <tbody>
+          <tr><td class="num">09</td><td>DPR 是什么？改 <code>canvas.width</code> 会连带发生什么？为什么改完必须重新初始化上下文？</td></tr>
+          <tr><td class="num">10</td><td>懒渲染用什么 API？它省的是什么、不省的是什么？连页模式为什么不能懒？</td></tr>
+          <tr><td class="num">11</td><td>100 页文档的页 canvas 占多少显存？怎么主动回收远处页面的位图？</td></tr>
+          <tr><td class="num">12</td><td>排版是 O(文档长度)，每次按键都触发。这个矛盾的两个工程解法各牺牲什么？</td></tr>
+          <tr><td class="num">13</td><td>一次 50ms 的卡顿，怎么在 Performance 面板里判断它来自排版、绘制还是撤销恢复？</td></tr>
+          <tr><td class="num">14</td><td>哪些操作会让画布内容空白？至少列出三种原因和各自的判断方法。</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>第 ⑤ 条 · 本地存储与多标签页</h3>
+    <div class="tablewrap">
+      <table>
+        <tbody>
+          <tr><td class="num">15</td><td>localStorage 的三个硬限制是什么？哪类数据绝对不该放？超限时会发生什么？</td></tr>
+          <tr><td class="num">16</td><td>自动保存的节流策略怎么设计？<code>pagehide</code> 和 <code>beforeunload</code> 选哪个、为什么？</td></tr>
+          <tr><td class="num">17</td><td>IndexedDB 写入是异步的，怎么防「后发的保存先落地」？</td></tr>
+          <tr><td class="num">18</td><td>状态恢复要恢复哪些东西？文档版本号在恢复流程里扮演什么角色？</td></tr>
+          <tr><td class="num">19</td><td>两个标签页同时编辑，互斥锁 / 乐观并发 / 实时协同三档各防住什么？你的产品选哪档、为什么？</td></tr>
+          <tr><td class="num">20</td><td><code>Web Locks API</code> 的锁什么时候释放？持有者假死了怎么办？</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>第 ⑥ 条 · 媒体文件</h3>
+    <div class="tablewrap">
+      <table>
+        <tbody>
+          <tr><td class="num">21</td><td>一张 12MB 的手机原图从 <code>File</code> 对象到画布显示，中间要过哪五道关？</td></tr>
+          <tr><td class="num">22</td><td>EXIF 方向问题怎么来的？<code>imageOrientation: 'from-image'</code> 替你做了什么？</td></tr>
+          <tr><td class="num">23</td><td>降采样目标宽度怎么算？为什么不是「显示多宽就存多宽」？</td></tr>
+          <tr><td class="num">24</td><td>为什么图片 Blob 进 IndexedDB 而不是 base64 进 localStorage？体积差多少？</td></tr>
+          <tr><td class="num">25</td><td>视频为什么不进文档数据？封面帧怎么取？</td></tr>
+          <tr><td class="num">26</td><td>哪些媒体操作能放进 Worker？判断标准是什么？</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>如果只有一周</h3>
+    <p>最后给一条务实的路径。想在简历上诚实地写「做过可视化编辑器」，不需要做出能商用的产品，需要的是一个<strong>每个环节都亲手写过</strong>的最小实现——五百行左右，一周的晚间时间足够：</p>
+    <ul>
+      <li><strong>第 1 天：模型与测量。</strong>扁平字符数组 + <code>measureText</code> 缓存 + 逐字断行。验收标准：拖动窗口宽度，行实时重排、折点正确。</li>
+      <li><strong>第 2 天：绘制。</strong>整页 canvas + DPR 适配 + 同样式合并。验收标准：一万字文档滚动流畅，屏幕上打出的 <code>fillText</code> 次数从一万掉到一百以内。</li>
+      <li><strong>第 3 天：光标与命中。</strong>隐藏 input 接输入，坐标表反查命中，行尾空白吸附。验收标准：点哪光标到哪；中文输入法整句上屏不乱跳。</li>
+      <li><strong>第 4 天：选区与撤销。</strong>拖选画高亮矩形；快照栈 + 500ms 合并窗 + 标点断步。验收标准：连打 40 字一次退光；插入图片单独成步。</li>
+      <li><strong>第 5 天：持久化与多标签。</strong>IndexedDB 节流保存 + <code>pagehide</code> 兜底 + Web Locks 防双开。验收标准：刷新后内容与光标都在；双标签第二个进只读。</li>
+      <li><strong>周末：挑最不顺手的那一点打磨。</strong>那一点就是你面试时最能讲的东西——因为卡住你的地方，也会卡住别人，而你已经走过来了。</li>
+    </ul>
+    <p class="note"><b>一句诚实的提醒：</b>这个最小实现不会比开源编辑器好，也不需要比。它的价值在于：做完之后，你去读任何一个真实编辑器的源码——本篇解剖的这个、或者任何别的——都能在 30 分钟内找到「断行在哪、命中在哪、撤销在哪」。JD 第 ③ 条筛的就是这个。</p>
+    <p>清单到这里。结语说三句想留下的话。</p>
+  </div>
+</section>
+
+<div class="wrap epilogue" id="closing">
+  <h2>结语：接过来的是控制权，也是全部责任</h2>
+  <p>写完这篇，回头再看那条 JD 的第 ③ 条，「只做过管理后台表格页面的不合适」就不再像门槛，更像一句忠告。表格页面的世界里，浏览器是权威：它排文字、画光标、管历史、存表单。<strong>可视化编辑器的世界里，你就是权威</strong>——每一个像素为什么在那、每一个字符为什么折到这、每一次撤销退到哪，都必须有人给出可解释的答案。浏览器交出来的不是自由，是六份责任。</p>
+  <p>这篇文章能给你的不是六份责任的全部细节，而是三个带得走的判断：</p>
+  <div class="rules">
+    <div class="rule"><b>RULE 01 · 一份数据，三个消费者，一个都不能错</b><p>排版、绘制、命中测试读的是同一份坐标表。谁先算、谁缓存、谁失效，决定了光标和文字对不对得上。三个消费者的一致性，就是「手感」的技术实体。</p></div>
+    <div class="rule"><b>RULE 02 · 每个白送的功能都要标价</b><p>光标要闪、输入法要候选框、撤销要合并、断行要避头尾——在 contenteditable 里这些是浏览器的事，换成 canvas 就全是你的事。动手前先把六笔账写下来；缺哪笔，上线后哪笔就变成事故。</p></div>
+    <div class="rule"><b>RULE 03 · 库负责机制，宿主负责决策</b><p>canvas 编辑器库不自动保存、不做多标签仲裁，不是偷懒，是边界：它不知道自己跑在什么环境里。读懂库留给你的「内容变化回调 + 数据出口」，把存储决策接进自己的业务——这一层的判断力，比多会一个框架值钱。</p></div>
+  </div>
+  <div class="limits"><b>这篇没解决的：</b>协同编辑（OT/CRDT 是另一个世界，本篇的快照撤销在协同场景下完全不成立）；无障碍（canvas 对读屏软件天然失明，完整键盘导航 + ARIA live 补课的工程量常超过渲染本身，这是真实产品里最重的隐藏成本）；超大文档的极限优化（十万字级要分片排版 + Worker，本篇只点到为止）。</div>
+  <div class="links">
+    <a href="https://github.com/Hufe921/canvas-editor" target="_blank" rel="noopener">canvas-editor（本文解剖标本 · MIT）</a>
+    <a href="https://developer.mozilla.org/zh-CN/docs/Web/API/CanvasRenderingContext2D/measureText" target="_blank" rel="noopener">MDN · measureText</a>
+    <a href="https://developer.mozilla.org/zh-CN/docs/Web/API/Web_Locks_API" target="_blank" rel="noopener">MDN · Web Locks</a>
+    <a href="https://developer.mozilla.org/zh-CN/docs/Web/API/IndexedDB_API" target="_blank" rel="noopener">MDN · IndexedDB</a>
+    <a href="https://developer.mozilla.org/zh-CN/docs/Web/API/IntersectionObserver" target="_blank" rel="noopener">MDN · IntersectionObserver</a>
+    <a href="https://starrysea1412.github.io/agent-signals/" target="_blank" rel="noopener">上期 · VOL.08 Agent 的三条信号线</a>
+  </div>
+</div>
+
+<footer class="wrap site-foot">
+  <div>
+    <div>造物手记 VOL.09 · 把文字画成像素</div>
+    <div style="margin-top:5px">DRAFTING / 2026.11 / 单文件 · 零依赖 · 确定性小样</div>
+  </div>
+  <div class="foot-note">文中源码引文取自开源项目 canvas-editor（MIT License，v0.9.132），为可读性有删节与换行调整；小样中的估算均已标注模型与假设。四枚小样为确定性模型：无随机数、参数可调、行为可复现。字体为 LXGW 文楷（OFL 许可，见 assets/fonts/OFL.txt）。插图由 GPT 系图像模型生成。</div>
+</footer>
+
+</main>
+
+<script>
+/* 四枚确定性小样 + 阅读进度条（VOL.09 · 零依赖，全部原生 DOM，无随机数）。 */
+(() => {
+  "use strict";
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+  const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  const prog = $("#progress");
+  if (prog) {
+    const paint = () => {
+      const h = document.documentElement;
+      const max = h.scrollHeight - h.clientHeight;
+      prog.style.transform = "scaleX(" + (max > 0 ? h.scrollTop / max : 0) + ")";
+    };
+    addEventListener("scroll", paint, { passive: true });
+    addEventListener("resize", paint, { passive: true });
+    paint();
+  }
+
+  /* 确定性字宽模型：全角＝1.0×字号，半角＝0.55×字号。
+     与真实 measureText 的量级关系一致；小样追求可复现，不追求字体度量的绝对精确。 */
+  const isWide = (ch) => /[\u2E80-\u9FFF\uF900-\uFAFF\uFF01-\uFF60\u3000-\u303F\u201C\u201D\u2018\u2019\u2014\u2026]/.test(ch);
+  const charW = (ch, fs) => (isWide(ch) ? fs : fs * 0.55);
+
+  /* ══ DEMO 01 · 排版流水线（逐字测量 + 贪心断行）══ */
+  (() => {
+    const linesEl = $("#d1-lines"), ruler = $("#d1-ruler");
+    if (!linesEl) return;
+    const textIn = $("#d1-text"), widthIn = $("#d1-width"), fsIn = $("#d1-fs-in");
+    const R = { len: $("#d1-len"), w: $("#d1-w"), fs: $("#d1-fs"), n: $("#d1-n"), rows: $("#d1-rows"), measure: $("#d1-measure"), fill: $("#d1-fill"), naive: $("#d1-naive") };
+    const seen = new Map(); // 字符+字号 → 已量过（模拟 cacheMeasureText 的键）
+
+    function render() {
+      const text = textIn.value;
+      const W = +widthIn.value, fs = +fsIn.value;
+      const chars = [...text];
+      let measured = 0, fresh = 0;
+
+      linesEl.innerHTML = ""; ruler.innerHTML = "";
+      linesEl.style.width = W + "px"; ruler.style.width = W + "px";
+      R.w.textContent = W; R.fs.textContent = fs; R.len.textContent = chars.length + " 字";
+
+      for (let x = 0; x <= W; x += 50) {
+        const t = document.createElement("i");
+        if (x % 100 === 0) { t.className = "major"; t.textContent = x; t.style.left = x + "px"; }
+        else { t.style.left = x + "px"; }
+        ruler.appendChild(t);
+      }
+
+      const rows = [[]];
+      let x = 0;
+      for (const ch of chars) {
+        measured++;
+        const key = ch + "@" + fs;
+        if (!seen.has(key)) { seen.set(key, 1); fresh++; }
+        const w = charW(ch, fs);
+        if (x + w > W && x > 0) { rows.push([]); x = 0; rows[rows.length - 1].wrapped = true; }
+        rows[rows.length - 1].push({ ch, w });
+        x += w;
+      }
+
+      rows.forEach((row, ri) => {
+        const line = document.createElement("div");
+        line.className = "ts-line";
+        line.innerHTML = '<span class="ln">' + String(ri + 1).padStart(2, "0") + "</span>";
+        let used = 0;
+        row.forEach((c, ci) => {
+          const s = document.createElement("span");
+          s.className = "ts-char" + (ci === 0 && ri > 0 ? " wrapstart" : "");
+          s.style.width = c.w + "px";
+          s.textContent = c.ch;
+          s.title = "「" + c.ch + "」 " + c.w.toFixed(1) + "px";
+          line.appendChild(s);
+          used += c.w;
+        });
+        const rest = W - used;
+        if (rest > 0.5) {
+          const f = document.createElement("span");
+          f.className = "ts-char ts-rest";
+          f.style.width = rest + "px";
+          f.title = "行尾剩余 " + rest.toFixed(0) + "px";
+          line.appendChild(f);
+        }
+        linesEl.appendChild(line);
+      });
+
+      const g = document.createElement("div");
+      g.className = "ts-guide"; g.style.right = "0";
+      linesEl.appendChild(g);
+
+      const total = chars.reduce((a, ch) => a + charW(ch, fs), 0);
+      const naiveRows = Math.max(1, Math.ceil(total / W));
+      const lastUsed = rows.length ? rows[rows.length - 1].reduce((a, c) => a + c.w, 0) : 0;
+      R.n.textContent = chars.length;
+      R.rows.textContent = rows.length;
+      R.measure.innerHTML = measured + "<small>次</small>";
+      R.measure.title = "本次排版逐字量宽 " + measured + " 次；其中 " + (measured - fresh) + " 次可被缓存命中";
+      R.fill.innerHTML = Math.round((lastUsed / W) * 100) + "<small>%</small>";
+      R.naive.textContent = "若按「每个字都是全角」估算：" + naiveRows + " 行；逐字测量后实际 " + rows.length + " 行。" +
+        (naiveRows === rows.length ? "这次估算侥幸对了——因为样本几乎全是全角。" : "差 " + Math.abs(naiveRows - rows.length) + " 行。混进一个半角字符，估算就开始撒谎。");
+    }
+
+    textIn.addEventListener("input", render);
+    widthIn.addEventListener("input", render);
+    fsIn.addEventListener("input", render);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(render);
+    render();
+  })();
+
+  /* ══ DEMO 02 · 绘制合并台（真实 canvas + fillText 批次统计）══ */
+  (() => {
+    const cv = $("#d2-canvas");
+    if (!cv) return;
+    const sel = $("#d2-text"), fsIn = $("#d2-fs-in"), mergeIn = $("#d2-merge");
+    const R = { calls: $("#d2-calls"), naive: $("#d2-naive"), now: $("#d2-now"), batch: $("#d2-batch"), avg: $("#d2-avg"), sw: $("#d2-sw"), cl: $("#d2-cl"), note: $("#d2-note"), runs: $("#d2-runs"), bar1: $("#d2-bar1"), bar2: $("#d2-bar2"), plen: $("#d2-plen") };
+
+    const PLAIN = "把文字画成像素是一次造物：排版引擎先量每一个字，再决定往哪折行；绘制引擎把同一款式的连续字符合并成一次调用，把像素按批次交给图形层，一万次调用变成几十次。";
+    const MIXED = [
+      ["从 string 到像素，", "n"],
+      ["中间隔着一台排版机：", "b"],
+      ["measureText 量宽、", "r"],
+      ["computeRowList 折行、", "b"],
+      ["fillText 落墨。", "r"],
+      ["样式每变一次，批次就断一次。", "n"]
+    ];
+
+    function buildChars() {
+      const fs = +fsIn.value;
+      const out = [];
+      const push = (str, style) => { for (const ch of str) out.push({ ch, style }); };
+      if (sel.value === "mixed") MIXED.forEach(([s, st]) => push(s, st));
+      else {
+        push(PLAIN, "n");
+        if (sel.value === "dense") out.forEach((c, i) => { c.style = ["n", "b", "r"][Math.floor(i / 3) % 3]; });
+      }
+      out.forEach(c => { c.w = charW(c.ch, fs); });
+      return { chars: out, fs };
+    }
+
+    function render() {
+      const { chars, fs } = buildChars();
+      R.plen.textContent = chars.length + " 字";
+      const CW = 480, PAD = 10, avail = CW - PAD * 2;
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      cv.width = CW * dpr; cv.height = 150 * dpr;
+      const ctx = cv.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.fillStyle = "#fbf8ee"; ctx.fillRect(0, 0, CW, 150);
+      ctx.strokeStyle = "rgba(45,90,135,.14)"; ctx.lineWidth = 1;
+      for (let y = 0; y <= 150; y += 25) { ctx.beginPath(); ctx.moveTo(0, y + .5); ctx.lineTo(CW, y + .5); ctx.stroke(); }
+
+      const rows = [[]]; let x = PAD, y = 22;
+      for (const c of chars) {
+        if (x + c.w > PAD + avail && x > PAD) { rows.push([]); x = PAD; y += fs * 1.7; }
+        if (y > 142) break;
+        c.x = x; c.y = y; rows[rows.length - 1].push(c); x += c.w;
+      }
+      const placed = rows.flat();
+
+      const merged = mergeIn.checked;
+      const runs = [];
+      for (const c of placed) {
+        const last = runs[runs.length - 1];
+        if (merged && last && last.style === c.style && last.y === c.y) { last.text += c.ch; last.w += c.w; }
+        else runs.push({ text: c.ch, style: c.style, w: c.w, x: c.x, y: c.y });
+      }
+
+      const STYLE = {
+        n: { font: fs + 'px "LXGW WenKai", sans-serif', color: "#24251f" },
+        b: { font: "bold " + fs + 'px "LXGW WenKai", sans-serif', color: "#2d5a87" },
+        r: { font: fs + 'px "LXGW WenKai", sans-serif', color: "#b8402e" }
+      };
+      let fontSw = 0, colorSw = 0, pf = null, pc = null;
+      for (const r of runs) {
+        const st = STYLE[r.style];
+        if (st.font !== pf) { fontSw++; pf = st.font; }
+        if (st.color !== pc) { colorSw++; pc = st.color; }
+        ctx.font = st.font; ctx.fillStyle = st.color;
+        ctx.fillText(r.text, r.x, r.y);
+      }
+
+R.runs.innerHTML = "";
+      runs.slice(0, 24).forEach((r, i) => {
+        const chip = document.createElement("span");
+        chip.className = "pt-run " + (merged ? "merged" : "one");
+        chip.textContent = (merged ? r.text : "「" + r.text + "」") + " · " + (merged ? r.text.length : 1) + "字";
+        chip.title = "第 " + (i + 1) + " 次调用：" + r.text;
+        R.runs.appendChild(chip);
+      });
+      if (runs.length > 24) {
+        const more = document.createElement("span");
+        more.className = "pt-run"; more.textContent = "…" + (runs.length - 24) + " 批";
+        R.runs.appendChild(more);
+      }
+
+      const naive = placed.length, now = runs.length;
+      R.calls.textContent = now;
+      R.naive.textContent = naive; R.now.textContent = now;
+      R.batch.textContent = now; R.avg.textContent = (placed.length / now).toFixed(1);
+      R.sw.textContent = merged ? fontSw : placed.length;
+      R.cl.textContent = merged ? colorSw : placed.length;
+      const mx = Math.max(naive, now, 1);
+      R.bar1.style.width = (naive / mx * 100) + "%";
+      R.bar2.style.width = (now / mx * 100) + "%";
+      R.note.textContent = merged
+        ? "合并开启：批次按「font + color 双键 + 连续」切分，本段收口 " + now + " 次。"
+        : "合并关闭：每个字符一次调用，共 " + now + " 次——RenderMode.COMPATIBILITY 就是这个行为。";
+    }
+
+    sel.addEventListener("change", render);
+    fsIn.addEventListener("input", render);
+    mergeIn.addEventListener("change", render);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(render);
+    render();
+  })();
+
+  /* ══ DEMO 03 · 命中测试台（实测坐标表 + 两种算法）══ */
+  (() => {
+    const page = $("#d3-page");
+    if (!page) return;
+    const logEl = $("#d3-log"), idxEl = $("#d3-index"), grid = $("#d3-grid"), modeEl = $("#d3-mode");
+    let cross = null;
+    const SAMPLE = ["命中测试是坐标表的逆向工程：", "鼠标落点要换算回字符下标，", "行尾的空白要吸附到行末，", "写错一个边界条件，手感就毁。"];
+    let positions = [];
+    let mode = "scan";
+
+    function build() {
+      page.innerHTML = '<div class="hit-cross" id="d3-cross" style="display:none"></div>';
+      SAMPLE.forEach((text, r) => {
+        const line = document.createElement("div");
+        line.className = "hit-line";
+        line.style.width = "fit-content";
+        line.dataset.row = String(r);
+        for (const ch of text) {
+          const s = document.createElement("span");
+          s.className = "hit-cell"; s.textContent = ch;
+          line.appendChild(s);
+        }
+        page.appendChild(line);
+      });
+      const pr = page.getBoundingClientRect();
+      positions = $$(".hit-cell", page).map((el, i) => {
+        const r = el.getBoundingClientRect();
+        const row = +el.closest(".hit-line").dataset.row;
+        el.dataset.i = String(i);
+        return { i, el, left: r.left - pr.left, right: r.right - pr.left, top: r.top - pr.top, bottom: r.bottom - pr.top, row, ch: el.textContent };
+      });
+      cross = page.querySelector("#d3-cross");
+    }
+
+    function clear() {
+      positions.forEach(p => p.el.classList.remove("scanned", "hit", "miss"));
+      if (cross) cross.style.display = "none";
+      page.querySelectorAll(".hit-cursor").forEach(e => e.remove());
+    }
+
+    function placeCaret(x, y) {
+      const c = document.createElement("div");
+      c.className = "hit-cursor";
+      c.style.left = x + "px"; c.style.top = y + "px"; c.style.height = "22px";
+      page.appendChild(c);
+    }
+
+    function rowsOf() {
+      const rows = [];
+      positions.forEach(p => { (rows[p.row] = rows[p.row] || []).push(p); });
+      return rows.filter(Boolean);
+    }
+
+    function snapEnd(y) {
+      const rows = rowsOf();
+      let best = null, bd = 1e9;
+      rows.forEach(row => {
+        const t = row[0].top, b = row[0].bottom;
+        const d = y < t ? t - y : y > b ? y - b : 0;
+        if (d < bd) { bd = d; best = row; }
+      });
+      return best;
+    }
+
+    function hit(x, y) {
+      const log = [];
+      clear();
+      if (mode === "scan") {
+        let hitIdx = -1;
+        for (const p of positions) {
+          p.el.classList.add("scanned");
+          const inside = p.left <= x && p.right >= x && p.top <= y && p.bottom >= y;
+          if (log.length <= 90) log.push((inside ? "yes " : "no  ") + "cell " + String(p.i).padStart(3, "0") + " 「" + p.ch + "」 x∈[" + p.left.toFixed(0) + "," + p.right.toFixed(0) + "] y∈[" + p.top.toFixed(0) + "," + p.bottom.toFixed(0) + "]");
+          if (inside) {
+            hitIdx = p.i;
+            p.el.classList.remove("scanned"); p.el.classList.add("hit");
+            log.push("HIT → index " + p.i + "，插入点吸附在字后");
+            placeCaret(p.right + 1, p.top);
+            break;
+          }
+        }
+        if (hitIdx < 0) {
+          if (log.length > 90) log.push("…（日志截断）");
+          const row = snapEnd(y);
+          if (row) {
+            const last = row[row.length - 1];
+            last.el.classList.add("hit");
+            log.push("未命中任何字符 → 按 y 吸附到第 " + (row[0].row + 1) + " 行，x 吸附到行尾");
+            placeCaret(last.right + 1, last.top);
+            idxEl.textContent = String(last.i) + "⁺";
+            logEl.innerHTML = log.map(esc).join("\n");
+            return;
+          }
+        }
+        idxEl.textContent = hitIdx >= 0 ? String(hitIdx) + "⁺" : "—";
+      } else {
+        const rows = rowsOf();
+        let row = null;
+        for (const r of rows) {
+          log.push("row " + (r[0].row + 1) + " y∈[" + r[0].top.toFixed(0) + "," + r[0].bottom.toFixed(0) + "] " + (y >= r[0].top - 3 && y <= r[0].bottom + 3 ? "✓" : "✗"));
+          if (y >= r[0].top - 3 && y <= r[0].bottom + 3) { row = r; break; }
+        }
+        if (!row) { row = snapEnd(y) || rows[0]; log.push("y 超出文本 → 吸附到第 " + (row[0].row + 1) + " 行"); }
+        let target = null, after = true;
+        for (const p of row) {
+          if (x >= p.left && x <= p.right) {
+            target = p; after = x > (p.left + p.right) / 2;
+            p.el.classList.add(after ? "hit" : "miss");
+            log.push("行内命中 cell " + p.i + " 「" + p.ch + "」 → 插入点在字" + (after ? "后" : "前") + "（x=" + x.toFixed(0) + (after ? " > " : " ≤ ") + "中点 " + ((p.left + p.right) / 2).toFixed(0) + "）");
+            break;
+          }
+          if (x < p.left) { target = p; after = false; p.el.classList.add("miss"); log.push("x 在行首之前 → 吸附到行首（字前）"); break; }
+        }
+        if (!target) { target = row[row.length - 1]; after = true; target.el.classList.add("hit"); log.push("x 超出行尾 → 吸附到行尾（字后）"); }
+        idxEl.textContent = String(target.i) + (after ? "⁺" : "⁻");
+        placeCaret(after ? target.right + 1 : target.left - 1, target.top);
+      }
+      logEl.innerHTML = log.map(esc).join("\n");
+    }
+
+    page.addEventListener("click", (e) => {
+      const pr = page.getBoundingClientRect();
+      hit(e.clientX - pr.left, e.clientY - pr.top);
+      cross = page.querySelector("#d3-cross") || cross;
+      if (cross) {
+        cross.style.display = "block";
+        cross.style.left = (e.clientX - pr.left - 4) + "px";
+        cross.style.top = (e.clientY - pr.top - 4) + "px";
+        cross.textContent = "×";
+      }
+    });
+    modeEl.addEventListener("click", (e) => {
+      const b = e.target.closest("button"); if (!b) return;
+      mode = b.dataset.mode;
+      modeEl.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+      logEl.textContent = "模式已切换为「" + (mode === "scan" ? "逐个扫描" : "行索引 + 吸附") + "」，再点一下纸面。";
+    });
+    grid.addEventListener("change", () => page.classList.toggle("grid-on", grid.checked));
+    $("#d3-reset").addEventListener("click", () => { clear(); idxEl.textContent = "—"; logEl.textContent = "已重置。"; if (cross) cross.style.display = "none"; });
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(build);
+    build();
+  })();
+
+  /* ══ DEMO 04 · 撤销合并器（确定性时间轴：每键 180ms，标点断步）══ */
+  (() => {
+    if (!$("#d4-text")) return;
+    const POEM = "撤销栈把时间切成片段，每一次合并都是一次对用户意图的猜测，标点会把它切断。";
+    const BYTES_PER_CHAR = 100; // 单份快照每字符字节的估算口径（见小样说明）
+    const winIn = $("#d4-window"), capIn = $("#d4-cap-in"), docIn = $("#d4-doc-in");
+    const R = { win: $("#d4-win"), cap: $("#d4-cap"), doc: $("#d4-doc"), keys: $("#d4-keys"), steps: $("#d4-steps"), rate: $("#d4-rate"), size: $("#d4-size"), mem: $("#d4-mem"), cost: $("#d4-cost"), note: $("#d4-note"), status: $("#d4-status") };
+    let text = "", keys = 0, lastAt = -1e9, stack = [], dropped = 0, cursorMoved = false;
+
+    function snapshotBytes() { return (+docIn.value) * BYTES_PER_CHAR; }
+    function fmt(b) { return b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : (b / 1024).toFixed(0) + " KB"; }
+
+    function renderStack() {
+      const cells = $("#d4-cells");
+      cells.innerHTML = "";
+      stack.forEach((e, i) => {
+        const c = document.createElement("span");
+        c.className = "uo-cell" + (i === stack.length - 1 ? " fresh" : (e.merged > 1 ? " merged" : ""));
+        c.style.height = (8 + Math.min(36, e.merged * 2)) + "px";
+        c.title = "第 " + (i + 1) + " 步 · 合并 " + e.merged + " 键 · 时刻 " + e.at + "ms";
+        cells.appendChild(c);
+      });
+      if (dropped) {
+        const d = document.createElement("span");
+        d.style.cssText = "font-family:var(--mono);font-size:9px;color:var(--red);margin-left:4px";
+        d.textContent = "−" + dropped + " 步被丢弃";
+        cells.appendChild(d);
+      }
+    }
+
+    function stats() {
+      const steps = stack.length;
+      const size = snapshotBytes();
+      const entries = steps + dropped; // 曾经新建过的快照数（含被丢弃的）
+      const mergeRate = keys ? Math.max(0, Math.round((1 - entries / keys) * 100)) : 0;
+      R.keys.textContent = keys;
+      R.steps.textContent = String(steps) + (dropped ? "（丢" + dropped + "）" : "");
+      R.steps.classList.toggle("over", dropped > 0);
+      R.rate.textContent = mergeRate + "%";
+      R.size.textContent = fmt(size);
+      R.mem.textContent = fmt(steps * size);
+      R.cost.textContent = ((+docIn.value / 1000) * 0.06 + 8).toFixed(1) + " ms";
+      R.note.textContent = keys === 0
+        ? "每敲一个键：判断是否落入合并窗 → 合并则改写栈顶，不合并则压入新快照。"
+        : (+winIn.value === 0)
+          ? "合并窗已调 0：此后每键一步、只增不减；栈内已有的合并步骤保留，超上限后最早历史被 shift() 丢弃。"
+          : (keys && mergeRate > 65)
+            ? "合并激进：栈很浅，一次 Ctrl+Z 退掉一整段——「一步」和按键数脱钩了。"
+            : "合并适中：标点断步让撤销粒度接近用户的语义单位。";
+    }
+
+    function typeKey() {
+      if (keys >= POEM.length) { R.status.textContent = "全部敲完。点「Ctrl+Z」看合并粒度，或刷新小样重玩。"; return; }
+      const t = keys * 180;
+      const ch = POEM[keys];
+      const gap = t - lastAt;
+      const canMerge = !cursorMoved && gap <= (+winIn.value) && stack.length > 0 && !/[。，；：！？、]/.test(POEM[keys - 1] || "");
+      if (canMerge) { stack[stack.length - 1].merged++; stack[stack.length - 1].text += ch; }
+      else { stack.push({ merged: 1, text: ch, at: t }); }
+      while (stack.length > +capIn.value) { stack.shift(); dropped++; }
+      text += ch; keys++; lastAt = t; cursorMoved = false;
+      $("#d4-text").innerHTML = esc(text.slice(0, -1)) + '<span class="new">' + esc(ch) + '</span><span class="uo-caret"></span>';
+      $("#d4-break").disabled = false; $("#d4-undo").disabled = false;
+      renderStack(); stats();
+      R.status.textContent = "第 " + keys + " 键「" + ch + "」" + (canMerge ? " → 并入栈顶（距上键 " + gap + "ms ≤ " + winIn.value + "ms）" : " → 压入新快照");
+    }
+
+    const BURST = 12;
+    function typeBurst() {
+      const start = keys;
+      while (keys < POEM.length && keys - start < BURST) typeKey();
+      const left = POEM.length - keys;
+      $("#d4-type").textContent = left > 0 ? "再打 " + Math.min(BURST, left) + " 键（剩 " + left + "）" : "已打完 · 试试 Ctrl+Z";
+    }
+    $("#d4-type").addEventListener("click", typeBurst);
+    $("#d4-type").textContent = "打 12 键试试（共 " + POEM.length + " 键）";
+    $("#d4-break").addEventListener("click", () => { cursorMoved = true; R.status.textContent = "光标已移走：下一次输入必然断步（位置窗规则）。"; $("#d4-break").disabled = true; });
+    $("#d4-undo").addEventListener("click", () => {
+      if (!stack.length) { R.status.textContent = "栈已见底（初始状态不入栈）。"; $("#d4-undo").disabled = true; return; }
+      const top = stack.pop();
+      text = text.slice(0, -top.merged);
+      $("#d4-text").innerHTML = esc(text) + '<span class="uo-caret"></span>';
+      renderStack(); stats();
+      R.status.textContent = "Ctrl+Z：退掉最近一批 " + top.merged + " 键「" + top.text + "」。这次撤销要付 " + R.cost.textContent + " 的全量重排。";
+    });
+    [winIn, capIn, docIn].forEach(el => el.addEventListener("input", () => {
+      R.win.textContent = winIn.value; R.cap.textContent = capIn.value; R.doc.textContent = docIn.value;
+      stats();
+    }));
+    R.win.textContent = winIn.value; R.cap.textContent = capIn.value; R.doc.textContent = docIn.value;
+    stats();
+  })();
+})();
+
+</script>
+</body>
+</html>

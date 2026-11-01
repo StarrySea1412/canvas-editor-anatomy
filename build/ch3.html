@@ -1,0 +1,134 @@
+<section class="chapter" id="ch3">
+  <div class="ch-head">
+    <div class="ch-num"><b>03</b>CHAPTER<br/>13:10</div>
+    <div class="ch-title">
+      <h2>把像素按批次交给 GPU</h2>
+      <p>为什么一万个 fillText 会卡，而几十次不会——绘制层的合并、懒渲染与「画哪一页」的算计</p>
+    </div>
+  </div>
+  <div class="ch-body">
+    <p class="lede">坐标算好了，每个字都知道自己该待在哪。最直觉的画法是：遍历字符，一个一个 <code>fillText</code>。两万字文档 = 两万次 canvas 调用。这条路在台式机上能跑，在笔记本上会烧起来，在手机上直接躺平。</p>
+
+    <h3>fillText 的真正成本不在渲染，在往返</h3>
+    <p>一次 <code>fillText</code> 的开销分三块：① JS 到图形层的调用穿越；② 字形查找与整形（shaping）；③ 光栅化。后两项其实不慢——GPU 画字很快——真正慢的是<strong>第一项乘以次数</strong>：两万次调用，每次几百纳秒的边界穿越加起来就是几十毫秒，还没算驱动层的批处理被反复打断。</p>
+    <p>而同一行字里，绝大多数情况下相邻字符共享<strong>同一个字体串、同一个颜色</strong>。既然参数没变，为什么要分开画？标本项目的答案是：攒着，一起画。它有一个专门的 TextParticle（文本粒子）干这件事，核心是两个方法——<code>record()</code> 负责记账，<code>complete()</code> 负责结算：</p>
+
+    <div class="code"><div class="code-bar"><b>文本合并绘制（真实源码，节选）</b><span>TextParticle.ts · record / _render</span></div>
+<pre><span class="k">public</span> <span class="f">record</span>(ctx, element, x, y) {
+  <span class="c">// 样式变了才「收口」：把攒着的一起画掉，再开新一批</span>
+  <span class="k">if</span> ((<span class="k">this</span>.curStyle && element.style !== <span class="k">this</span>.curStyle)
+      || element.color !== <span class="k">this</span>.curColor) {
+    <span class="k">this</span>.<span class="f">complete</span>();
+    <span class="k">this</span>.<span class="f">_setCurXY</span>(x, y);
+  }
+  <span class="k">this</span>.text += element.value;   <span class="c">// 只是拼字符串，还没画</span>
+  <span class="k">this</span>.curStyle = element.style;
+  <span class="k">this</span>.curColor = element.color;
+}
+
+<span class="k">private</span> <span class="f">_render</span>() {
+  <span class="k">if</span> (!<span class="k">this</span>.text) <span class="k">return</span>;
+  <span class="k">this</span>.ctx.font      = <span class="k">this</span>.curStyle;
+  <span class="k">this</span>.ctx.fillStyle = <span class="k">this</span>.curColor;
+  <span class="k">this</span>.ctx.<span class="f">fillText</span>(<span class="k">this</span>.text, <span class="k">this</span>.curX, <span class="k">this</span>.curY); <span class="c">// 一次画一串</span>
+}</pre></div>
+
+    <p>效果是数量级的：一篇普通文档里，样式变化点通常在几十到几百处，而不是几万处。于是<strong>两万次调用变成几十到几百次</strong>。有个细节值得划线：碰到图片、表格、控件这类非文本元素时，代码会立刻调一次 <code>complete()</code>——因为它们不走文本管线，不收口的话，后面那批字会「接」在错误的位置上。</p>
+
+    <p class="note"><b>为什么不能合并不连续的字？</b>因为 <code>fillText</code> 的签名决定了：一次调用只能画一串从同一个起点开始、依次排下去的文字。它画不了「第 1 个字在 x=10、第 2 个字跳到 x=200」。所以合并只能发生在位置连续、样式相同的字符上——行内的每一次对齐调整、每一个上标、每一个行内空格缩进，都是一次强制收口。</p>
+
+    <div class="pull">合并绘制的核心不是「少画」，是<b>把「参数相同」这个事实识别出来，让图形层一次处理完。</b></div>
+
+    <h3>但合并解决不了「画多少」的问题</h3>
+    <p>合并把「两万次 → 几十次」解决了，可它没解决另一件事：<strong>这两万字里，用户眼前只有两三页。</strong>三十页文档全部画一遍，画完的二十七页在屏幕外面安静地烧着 CPU。</p>
+    <p>所以第二招是「画哪一页」。标本项目的做法干净利落——给每个页 canvas 挂一个 <code>IntersectionObserver</code>，谁进视口就画谁：</p>
+
+    <div class="code"><div class="code-bar"><b>分页懒渲染（真实源码，节选）</b><span>Draw.ts · _lazyRender</span></div>
+<pre><span class="k">private</span> <span class="f">_lazyRender</span>() {
+  <span class="k">this</span>._disconnectLazyRender();
+  <span class="k">this</span>.lazyRenderIntersectionObserver = <span class="k">new</span> <span class="f">IntersectionObserver</span>(entries => {
+    entries.<span class="f">forEach</span>(entry => {
+      <span class="k">if</span> (entry.isIntersecting) {
+        <span class="k">const</span> index = Number(entry.target.dataset.index);
+        <span class="k">this</span>.<span class="f">_drawPage</span>({ pageNo: index });   <span class="c">// 只画进视口的这页</span>
+      }
+    });
+  });
+  <span class="k">this</span>.pageList.<span class="f">forEach</span>(el =&gt; <span class="k">this</span>.lazyRenderIntersectionObserver.<span class="f">observe</span>(el));
+}</pre></div>
+
+    <p>有意思的是源码里的一个条件分支：<code>isLazy && isPagingMode</code>——懒渲染只在分页模式下开启，连页模式（像网页那样连续滚动、没有「页」的概念）必须立即渲染。旁边留着一行注释：「连续页因为有高度的变化会导致canvas渲染空白，需立即渲染，否则会出现闪动」。<strong>性能优化从来不是免费的：懒渲染省下的 CPU，要用偶尔的空白闪动来还；连页模式的正确性，要用全量渲染来买。</strong>知道什么时候不该优化，比知道怎么优化更值钱。</p>
+
+    <h3>DPR：一个数字决定清晰度，也决定显存</h3>
+    <p>canvas 有一个反直觉的地方：<strong>内部像素尺寸</strong>和 <strong>CSS 显示尺寸</strong>是两回事。CSS 里写 <code>width: 794px</code>，但 canvas 的 <code>width</code> 属性如果是 794，在 2 倍屏上会被拉伸两倍显示——糊。正确做法是把内部尺寸放大 DPR 倍，再用 CSS 缩回去：</p>
+
+    <div class="code"><div class="code-bar"><b>设备像素比（真实源码，节选）</b><span>Draw.ts · setPageDevicePixel</span></div>
+<pre><span class="k">const</span> dpr = <span class="k">this</span>.<span class="f">getPagePixelRatio</span>();     <span class="c">// 默认即 window.devicePixelRatio</span>
+<span class="k">this</span>.pageList.<span class="f">forEach</span>((p, i) => {
+  p.width  = width * dpr;     <span class="c">// 内部：真实像素</span>
+  p.height = height * dpr;
+  p.style.width  = <span class="s">`${width}px`</span>;   <span class="c">// 外部：CSS 尺寸</span>
+  p.style.height = <span class="s">`${height}px`</span>;
+  <span class="k">this</span>.<span class="f">_initPageContext</span>(<span class="k">this</span>.ctxList[i]);  <span class="c">// ← 尺寸变了，上下文被重置</span>
+});</pre></div>
+
+    <p>这段代码里最容易漏的是最后那行。<strong>改 canvas 的 width/height 会把整个上下文状态清空</strong>——变换矩阵、字号、颜色、裁剪区，全部归零。所以每次改尺寸都必须重新初始化上下文。漏掉的症状极其诡异：改一次纸张大小，文字全部偏移、字号错乱、颜色变回黑。代码看起来完全正确，bug 却真实存在——因为「重置」发生在你看不见的地方。</p>
+    <p>还有一层：DPR 是会变的。把窗口从 1 倍屏拖到 2 倍屏，<code>devicePixelRatio</code> 就变了。标本项目专门监听了 <code>matchMedia('(resolution: ${dpr}dppx)')</code> 的变化事件来重设画布。这类「窗口跨屏拖动」是测试编辑器时最容易漏的场景——在公司 1 倍屏开发，用户在 3 倍屏上用，文字糊成一团。</p>
+    <p>显存账也要在这里算：A4 纸 794×1123 CSS 像素，DPR 2 下内部尺寸 1588×2246，RGBA 四字节，<strong>一页 14.3MB</strong>。一百页文档，光画布就 1.4GB——懒渲染只省绘制不省显存，这笔账第六章接着算。</p>
+
+    <div class="demo" id="d2">
+<div class="demo-head">
+        <span class="demo-tag">DEMO 02 · PAINT</span>
+        <span class="demo-title">绘制合并台<span class="hint">切换合并开关，数一数 fillText 被调用了多少次</span></span>
+      </div>
+      <div class="demo-body">
+        <div class="controls">
+          <div class="ctl" style="flex:2 1 240px">
+            <label>段落 <b id="d2-plen">0 字</b></label>
+            <select id="d2-text">
+              <option value="plain">纯文本一段（样式全同）</option>
+              <option value="mixed" selected>混排：加粗 + 朱色强调</option>
+              <option value="dense">密集混排：每 3 字换一次样式</option>
+            </select>
+          </div>
+          <div class="ctl" style="flex:1 1 150px">
+            <label>字号 <b id="d2-fs">15</b></label>
+            <input type="range" id="d2-fs-in" min="12" max="24" step="1" value="15"/>
+          </div>
+          <div class="ctl-btn">
+            <label class="switch"><input type="checkbox" id="d2-merge" checked/>合并同样式连续字</label>
+          </div>
+        </div>
+        <div class="pt-wrap">
+          <div>
+            <div class="pt-page">
+              <canvas id="d2-canvas" width="480" height="150" style="width:100%;height:auto;display:block"></canvas>
+              <div class="pt-runs" id="d2-runs"></div>
+            </div>
+            <div class="pt-legend">
+              <span><b class="a">红框</b>＝逐字单独调用</span>
+              <span><b class="b">绿框</b>＝合并后的一批</span>
+            </div>
+          </div>
+          <div class="pt-side">
+            <h5>PAINT STATS</h5>
+            <div class="pt-px">fillText 调用 <b id="d2-calls">0</b> 次</div>
+            <div class="pt-bar"><i id="d2-bar1" style="width:0"></i><i class="b2" id="d2-bar2" style="width:0"></i></div>
+            <div class="hintline">上段蓝条＝不合并（<span id="d2-naive">0</span> 次）／下段绿条＝当前模式（<span id="d2-now">0</span> 次）</div>
+            <div class="pt-crect">
+              <div>批次<b id="d2-batch">0</b></div>
+              <div>平均每批字数<b id="d2-avg">0</b></div>
+              <div>字体切换<b id="d2-sw">0</b></div>
+              <div>颜色切换<b id="d2-cl">0</b></div>
+            </div>
+            <div class="hintline" id="d2-note"></div>
+          </div>
+        </div>
+        <div class="hintline" style="margin-top:11px">模型说明：这里是真的在画 canvas（不是模拟）。字宽用与 DEMO 01 相同的确定性模型；「批次」按真实合并规则（font + color 双键 + 位置连续）切分。切到「密集混排」，合并几乎失效——样式越花，合并收益越小，这条规律由内容决定，不由你决定。</div>
+      </div>
+      <div class="demo-foot">把「密集混排」和「纯文本」来回切两次：同样多的字，<b>调用次数差出十倍以上</b>。合并收益＝样式重复度——这就是为什么规范排版比花哨排版跑得快。</div>
+    </div>
+
+    <p>到这里，字终于变成像素了。但用户不只看，还要<strong>点</strong>。而「点」比「画」难得多——因为它要求你从像素反推回数据。</p>
+  </div>
+</section>

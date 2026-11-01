@@ -1,0 +1,171 @@
+<section class="chapter" id="ch5">
+  <div class="ch-head">
+    <div class="ch-num"><b>05</b>CHAPTER<br/>27:40</div>
+    <div class="ch-title">
+      <h2>撤销栈与自动保存的账</h2>
+      <p>每一步一份全文档快照，和那个几乎没人愿意提的合并问题——两个机制长得像，代价完全不同</p>
+    </div>
+  </div>
+  <div class="ch-body">
+    <p class="lede">用户已经能看、能点、能打字了。接下来他会做两件人类必然做的事：按 Ctrl+Z；关掉页面再回来，期待内容还在。前者是撤销，后者是持久化。这两件事在实现上看起来是同一类问题——「记住过去」——但它们<strong>一个在内存里记账，一个在磁盘上记账</strong>，坑完全不一样。</p>
+
+    <h3>撤销栈：一个闭包数组</h3>
+    <p>标本项目的撤销栈，语法上简单到让人放松警惕：</p>
+
+    <div class="code"><div class="code-bar"><b>HistoryManager（真实源码，节选）</b><span>栈里存的是函数，不是数据</span></div>
+<pre><span class="k">export class</span> HistoryManager {
+  <span class="k">private</span> undoStack: Array&lt;Function&gt; = [];
+  <span class="k">private</span> redoStack: Array&lt;Function&gt; = [];
+
+  <span class="f">public</span> <span class="f">undo</span>() {
+    <span class="k">if</span> (<span class="k">this</span>.undoStack.length &gt; <span class="n">1</span>) {
+      <span class="k">const</span> pop = <span class="k">this</span>.undoStack.<span class="f">pop</span>()!;
+      <span class="k">this</span>.redoStack.<span class="f">push</span>(pop);
+      <span class="k">if</span> (<span class="k">this</span>.undoStack.length) {
+        <span class="k">this</span>.undoStack[<span class="k">this</span>.undoStack.length - <span class="n">1</span>](); <span class="c">// 执行「上一个状态」</span>
+      }
+    }
+  }
+
+  <span class="f">public</span> <span class="f">execute</span>(fn: Function) {
+    <span class="k">this</span>.undoStack.<span class="f">push</span>(fn);
+    <span class="k">if</span> (<span class="k">this</span>.redoStack.length) <span class="k">this</span>.redoStack = []; <span class="c">/* 新操作清空重做 */</span>
+    <span class="k">while</span> (<span class="k">this</span>.undoStack.length &gt; <span class="k">this</span>.maxRecordCount) {
+      <span class="k">this</span>.undoStack.<span class="f">shift</span>();                 <span class="c">/* 超上限，丢最老的 */</span>
+    }
+  }
+}</pre></div>
+
+    <p>栈里存的不是「逆操作」，而是<strong>「怎么回到那个状态」——一个闭包</strong>。入栈的瞬间，调用方把整份文档克隆一份，然后把「恢复这份克隆」包装成函数塞进栈里：</p>
+
+    <div class="code"><div class="code-bar"><b>入栈：快照整份文档（真实源码，节选）</b><span>Draw.ts · submitHistory</span></div>
+<pre><span class="f">public</span> <span class="f">submitHistory</span>(curIndex) {
+  <span class="k">const</span> oldElementList = <span class="f">getSlimCloneElementList</span>(<span class="k">this</span>.elementList);
+  <span class="k">const</span> oldHeader = <span class="f">getSlimCloneElementList</span>(<span class="k">this</span>.header.<span class="f">getElementList</span>());
+  <span class="k">const</span> oldRange  = <span class="f">deepClone</span>(<span class="k">this</span>.range.<span class="f">getRange</span>());
+  <span class="k">const</span> oldContext = <span class="f">deepClone</span>(<span class="k">this</span>.position.<span class="f">getPositionContext</span>());
+  <span class="k">const</span> pageNo = <span class="k">this</span>.pageNo, zone = <span class="k">this</span>.zone.<span class="f">getZone</span>();
+  <span class="k">this</span>.historyManager.<span class="f">execute</span>(() => {
+    <span class="k">this</span>.zone.<span class="f">setZone</span>(zone);
+    <span class="k">this</span>.<span class="f">setPageNo</span>(pageNo);
+    <span class="k">this</span>.position.<span class="f">setPositionContext</span>(<span class="f">deepClone</span>(oldContext));
+    <span class="k">this</span>.header.<span class="f">setElementList</span>(<span class="f">deepClone</span>(oldHeader));
+    <span class="c">// ……正文同理恢复，然后全量 render()</span>
+  });
+}</pre></div>
+
+    <p>注意 <code>getSlimCloneElementList</code> 这个名字——「瘦身克隆」。它克隆整份元素列表时<strong>主动丢掉 <code>metrics</code> 和 <code>style</code> 两个字段</strong>：前者是排版结果，后者是绘制用的字体串，都能从原始数据重新推导。快照只存「因」，不存「果」——这一个细节，是快照方案还能活着的主要原因。默认上限 <code>historyMaxRecordCount: 100</code>，构造函数里那个 <code>+1</code>（忽略第一次历史记录）也是个诚实的细节：初始状态不该算成一步可撤销的操作。</p>
+
+    <p>这套设计的三个后果，值得一条条摆出来：</p>
+    <ul>
+      <li><strong>简单到不会错。</strong>没有「操作逆运算」，没有「相邻操作合并」的规则，撤销就是恢复一份快照。任何奇怪的编辑序列都能正确回退，因为根本不推理——只复制。</li>
+      <li><strong>内存与「文档大小 × 步数」成正比。</strong>两万字的文档，一份瘦身克隆约 2MB（每个字符一个对象），100 步 = 200MB。这是第 4 条 JD「内存占用高」里最隐蔽的一笔，因为它不发生在绘制层，性能面板的火焰图上它藏在堆内存快照里。</li>
+      <li><strong>撤销一次 = 全量重排重绘一次。</strong>恢复快照后调 <code>render()</code>，两万字文档按一次 Ctrl+Z 就是一次完整排版。撤销比打字还卡，就是这么来的。</li>
+    </ul>
+
+    <div class="pull">快照式撤销的哲学：<b>不推理历史，只复制过去。</b>它用内存买正确性——对富文本来说，这笔买卖通常是划算的。</div>
+
+    <h3>那个没人愿意提的合并问题</h3>
+    <p>更难的问题在产品侧：用户连续敲 40 个键，每个键算一步吗？如果算，Ctrl+Z 一次只退一个字符，退完 40 个字要按 40 次——任何真实产品里都不可接受。浏览器原生输入框的行为是<strong>把一段连续输入合并成一次撤销</strong>。合并的判定条件，业内共识是四条：</p>
+    <ul>
+      <li><strong>时间窗</strong>——两次编辑间隔小于 N 毫秒（常见 500ms～1s）就并成一步；</li>
+      <li><strong>语义窗</strong>——同类型操作才合并；插入图片必须单独成步；</li>
+      <li><strong>位置窗</strong>——光标移走了就断步，否则「改前面一段再改后面一段」会被并成一步，一次撤销毁掉两处编辑；</li>
+      <li><strong>断点</strong>——标点、空格、样式切换、输入法上屏，都是天然的「一步结束」。</li>
+    </ul>
+    <p>值得诚实指出的是：<strong>标本项目的 HistoryManager 里一条合并规则都没有</strong>——每次 <code>execute</code> 无脑 push。也就是说，打 100 个字就耗尽 100 步上限，最早的 1 步已经被丢掉。合并的责任被推给了调用方（每个触发 <code>render</code> 的入口自己决定要不要提交历史）。这不是设计失误，是把「撤销粒度」当成了<strong>产品决策</strong>而不是技术参数：协作编辑器、写作工具、表单类应用对「一步」的定义完全不同。</p>
+    <p class="note"><b>一个面试级的问题：为什么不用 diff/patch 记撤销？</b>因为富文本的「一个操作」在字符层面经常不是连续区间。一次「删除 + 粘贴」可能是「第 100–200 字符被替换」，语义上却是两个操作；基于 diff 的撤销会在复杂操作后产生「撤销了半个操作」的效果，用户立刻就能发现。快照法用内存换正确性，在这个场景下是清醒的选择。</p>
+<div class="demo" id="d4">
+      <div class="demo-head">
+        <span class="demo-tag">DEMO 04 · UNDO</span>
+        <span class="demo-title">撤销合并器<span class="hint">调时间窗与上限，看栈怎么长、内存怎么涨</span></span>
+      </div>
+      <div class="demo-body">
+        <div class="controls">
+          <div class="ctl" style="flex:1 1 160px">
+            <label>合并时间窗 <b id="d4-win">600</b> ms</label>
+            <input type="range" id="d4-window" min="0" max="2000" step="100" value="600"/>
+          </div>
+          <div class="ctl" style="flex:1 1 160px">
+            <label>撤销栈上限 <b id="d4-cap">100</b> 步</label>
+            <input type="range" id="d4-cap-in" min="5" max="200" step="5" value="100"/>
+          </div>
+          <div class="ctl" style="flex:1 1 150px">
+            <label>文档规模 <b id="d4-doc">20000</b> 字</label>
+            <input type="range" id="d4-doc-in" min="2000" max="60000" step="1000" value="20000"/>
+          </div>
+          <div class="ctl-btn">
+            <button class="run" id="d4-type">连续输入</button>
+            <button class="ghost" id="d4-break" disabled>移走光标</button>
+            <button class="ghost" id="d4-undo" disabled>Ctrl+Z</button>
+          </div>
+        </div>
+        <div class="uo-wrap">
+          <div class="uo-stage">
+            <div class="uo-text" id="d4-text"><span style="color:var(--faint)">点「连续输入」开始——每键间隔 180ms，标点强制断步。</span></div>
+            <div class="uo-stack">
+              <h5>UNDO STACK · 每根柱子 = 一份快照（绿＝合并过若干键，红＝最新）</h5>
+              <div class="uo-cells" id="d4-cells"></div>
+            </div>
+            <div class="hintline" style="margin-top:8px" id="d4-status">每敲一个键：判断是否落入合并窗 → 合并则改写栈顶，不合并则压入新快照。</div>
+          </div>
+          <div class="uo-side">
+            <h5>SNAPSHOT ACCOUNT</h5>
+            <div class="uo-kv">
+              <span>按键次数</span><b id="d4-keys">0</b>
+              <span>栈内快照</span><b id="d4-steps">0</b>
+              <span>栈内合并率</span><b id="d4-rate">0%</b>
+              <span>单份快照</span><b id="d4-size">0 KB</b>
+              <span>栈总内存</span><b id="d4-mem">0 KB</b>
+              <span>一次撤销代价</span><b id="d4-cost">0 ms</b>
+            </div>
+            <div class="uo-note" id="d4-note">每敲一个键：判断是否落入合并窗 → 合并则改写栈顶，不合并则压入新快照。</div>
+          </div>
+        </div>
+        <div class="hintline" style="margin-top:11px">模型说明：单份快照按 100 字节/字符估算（瘦身克隆的量级；两万字 ≈ 2MB，与实测同一量级）；「一次撤销代价」＝全量重排（约 0.06ms/千字）＋整页重绘（估 8ms）之和，用于展示数量级而非精确基准。时间轴是确定性的：每键 180ms，无随机数。</div>
+      </div>
+      <div class="demo-foot">把时间窗拉到 0：每键一步，栈瞬间吃满上限，<b>最早的历史被 shift() 丢掉</b>；拉到 2000ms：整段话只剩三四步，一次 Ctrl+Z 退掉一整句。<b>合并率与「一步该退多少」之间，是一条需要产品决策的曲线，不是技术参数。</b></div>
+    </div>
+
+    <h3>自动保存：从「记住过去」到「保证不丢」</h3>
+    <p>撤销栈在内存里，刷新就没了。持久化是另一套账。先交代一个也许让人意外的事实：<strong>标本项目（一个功能完备的 canvas 编辑器库）不做自动保存。</strong>我在源码里翻了三遍：<code>localStorage</code> 只出现在剪贴板兜底里——</p>
+
+    <div class="code"><div class="code-bar"><b>库里的 localStorage 只干一件事（真实源码）</b><span>utils/clipboard.ts</span></div>
+<pre><span class="k">export function</span> <span class="f">setClipboardData</span>(data) {
+  localStorage.<span class="f">setItem</span>(EDITOR_CLIPBOARD, JSON.<span class="f">stringify</span>({
+    text: data.text,
+    elementList: data.elementList     <span class="c">/* 富文本结构，跨页粘贴时还能带上样式 */</span>
+  }));
+}</pre></div>
+
+    <p>没有 IndexedDB，没有自动保存定时器，没有崩溃恢复，一处都没有。这不是遗漏，是<strong>边界划分</strong>：库不知道自己跑在什么环境里（本地单机？多用户协作？只读预览？），没资格替宿主做存储决策。它给出的是两样让你能自己做的东西：一个 <code>contentChange</code> 回调，和一份「取当前完整数据」的 API。<strong>JD 第 ⑤ 条考的其实是这条边界线两侧的知识都要有：库提供机制，宿主负责决策。</strong></p>
+
+    <h4>localStorage 能撑到哪一步</h4>
+    <p>「每次内容变化就 <code>localStorage.setItem</code>」是最直觉的自动保存，也是最先炸的。三个硬限制：它是<strong>同步 API</strong>，写 2MB 字符串会阻塞主线程几十毫秒，而且正好发生在用户打字的时刻；配额只有 <strong>5MB 左右</strong>，两万字文档序列化后 1–3MB，图片一进来（base64 膨胀 33%）立刻超，超限时 <code>setItem</code> <strong>同步抛异常</strong>，没接住就是白屏；它<strong>只有字符串</strong>，图片附件只能 base64，体积和 CPU 双输。</p>
+
+    <h4>IndexedDB 的正确姿势</h4>
+    <p>正解是 IndexedDB：异步、配额按磁盘比例给（通常几百 MB 起步）、能直接存 Blob（图片存二进制，不膨胀）。但它自带三个坑：写入是<strong>异步的</strong>，用户快速打字时多个保存任务并发，后发的可能先落地，必须用单调递增版本号或单写入队列；写入要<strong>节流合并</strong>，不能每次按键都写；要<strong>留两个版本</strong>，「自动保存草稿」和「上一次手动保存」各一份，否则一次误操作就把好内容覆盖了。</p>
+
+    <div class="code"><div class="code-bar"><b>最小可用的自动保存骨架</b><span>节流 + 关页兜底 + 版本号</span></div>
+<pre><span class="k">let</span> pending = <span class="k">null</span>, timer = <span class="k">null</span>, seq = <span class="n">0</span>;
+
+<span class="k">function</span> <span class="f">onContentChange</span>() {
+  pending = editor.<span class="f">getValue</span>();            <span class="c">/* 拿一份快照（还不序列化） */</span>
+  <span class="k">if</span> (timer) <span class="k">return</span>;
+  timer = <span class="f">setTimeout</span>(flush, <span class="n">1200</span>);          <span class="c">/* 静默 1.2s 才写 */</span>
+}
+
+<span class="k">async function</span> <span class="f">flush</span>() {
+  timer = <span class="k">null</span>;
+  <span class="k">if</span> (!pending) <span class="k">return</span>;
+  <span class="k">const</span> payload = pending; pending = <span class="k">null</span>;
+  <span class="k">await</span> db.<span class="f">put</span>(<span class="s">'draft'</span>, { seq: ++seq, data: payload, at: Date.now() });
+}
+
+<span class="c">/* 关页/切后台：最后一次机会。pagehide 比 beforeunload 可靠（移动端尤其） */</span>
+addEventListener(<span class="s">'pagehide'</span>, () => { <span class="k">if</span> (pending) flush(); });</pre></div>
+
+    <p>状态恢复则在保存的对面：重启后要恢复的不只是内容——<strong>光标位置、选区、滚动位置、撤销栈要不要恢复，各是一个产品决策</strong>。最低配置是内容 + 文档版本号；版本号的作用是迁移：编辑器升级改了数据结构时，老草稿要先过一遍迁移函数再进内存，否则打开旧文档就是一次静默的数据损坏。</p>
+    <p>到这里，单标签页的编辑器算是完整了。但真实用户会同时开三个标签页改同一份文档——下一章就是这笔烂账。</p>
+  </div>
+</section>

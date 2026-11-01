@@ -1,0 +1,2 @@
+# 全量字体不入库（仓库只放子集 woff2）
+assets/fonts/*.ttf

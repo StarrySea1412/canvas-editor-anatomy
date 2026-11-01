@@ -1,0 +1,115 @@
+<section class="chapter" id="ch4">
+  <div class="ch-head">
+    <div class="ch-num"><b>04</b>CHAPTER<br/>20:00</div>
+    <div class="ch-title">
+      <h2>光标与那一「下」</h2>
+      <p>命中测试是坐标表的逆向解读：鼠标坐标怎么变回字符下标，以及光标为什么是一个 DOM 元素而不是画上去的</p>
+    </div>
+  </div>
+  <div class="ch-body">
+    <p class="lede">这一章讲的是整篇里最「反直觉」的两个东西。第一个：光标。第二个：点击。它们都是「从像素反推数据」的逆向工程——而逆向工程的质量，用户用一个词就能评价：<strong>手感</strong>。</p>
+
+    <h3>光标：为什么不用 canvas 画，而用一个 div</h3>
+    <p>第一反应肯定是「光标也画在 canvas 上」：在正确的位置画一条竖线不就完了。真做一遍就会发现三个无解的问题：</p>
+    <ul>
+      <li><strong>它要闪。</strong>canvas 上做闪烁意味着每 500ms 重绘一次——而重绘的粒度是整个页面（第 3 章的结论）。为了一个光标的闪烁反复重画整篇文档，荒谬。</li>
+      <li><strong>它要跟着滚动走。</strong>canvas 的内容不随滚动重绘，画在里面的光标会跟文字错位。</li>
+      <li><strong>它要接输入法。</strong>中文 IME 需要一个真实的、可聚焦的 DOM 元素做组合输入（composition）和候选框定位。canvas 不能聚焦。</li>
+    </ul>
+    <p>所以真实做法是三层分工：<strong>canvas 画字，一个绝对定位的 DOM div 画光标，一个隐藏的输入元素接键盘和 IME。</strong>标本项目里，光标就是 <code>document.createElement('div')</code> 造出来的一个普通元素，位置由坐标表算出：</p>
+
+    <div class="code"><div class="code-bar"><b>光标的坐标计算（真实源码，节选）</b><span>Cursor.ts · drawCursor</span></div>
+<pre><span class="c">// 光标高度 = 字高 + 上下各留一点余量（视觉上比字框略高，更像原生光标）</span>
+<span class="k">const</span> increaseHeight = Math.<span class="f">min</span>(metrics.height / <span class="n">4</span>, defaultOffsetHeight);
+<span class="k">const</span> cursorHeight   = metrics.height + increaseHeight * <span class="n">2</span>;
+<span class="k">const</span> descent = metrics.boundingBoxDescent &lt; <span class="n">0</span> ? <span class="n">0</span> : metrics.boundingBoxDescent;
+<span class="k">const</span> cursorTop = leftTop[<span class="n">1</span>] + ascent + descent - (cursorHeight - increaseHeight);
+<span class="c">// 插入点：普通情况取「这个字的右边框」，行首插入点取左边界</span>
+<span class="k">const</span> cursorLeft = hitLineStartIndex ? leftTop[<span class="n">0</span>] : rightTop[<span class="n">0</span>];
+
+cursorDom.style.width  = <span class="s">`${width * scale}px`</span>;
+cursorDom.style.left   = <span class="s">`${cursorLeft}px`</span>;
+cursorDom.style.top    = <span class="s">`${cursorTop}px`</span>;
+cursorDom.style.height = <span class="s">`${cursorHeight}px`</span>;</pre></div>
+
+    <p>三处细节值得盯住。第一：<strong><code>cursorLeft</code> 取的是 <code>rightTop[0]</code></strong>——光标画在「这个字的右边框」。因为光标表示插入点，插入点在第 n 个字之后，就是第 n 个字的右边；而行首没有「前一个字」，要用 <code>leftTop[0]</code>，这就是 <code>hitLineStartIndex</code> 分支的含义。第二：<strong><code>descent &lt; 0 ? 0 : descent</code></strong>——某些字符的墨迹下界是负数，不兜住光标就会往上飘。第三：光标高度刻意比字框高一点（上下各加四分之一字高、封顶一个常数），纯视觉考量，但少了这点余量用户就会说「光标太局促」。</p>
+    <p>闪烁也不是 CSS 一挂了事。源码的逻辑是：每次光标移动，先保持<strong>实心</strong>（重置一个 500ms 的 setTimeout），500ms 内没有动静才加一个 CSS 动画类开始闪。因为<strong>输入中的光标必须实心</strong>——用户每敲一个键光标都闪一下会晃眼。CSS 动画只是「静止状态」的装饰，输入事件才是它的开关。</p>
+
+    <p class="note"><b>输入法为什么是编辑器的鬼门关。</b>IME 组合期间，用户敲的是拼音，上屏的是汉字，中间还有候选框要跟着光标走。canvas 编辑器必须：① 让隐藏输入元素停在光标坐标上（否则候选框飘到屏幕左上角）；② composition 期间不重排（否则拼音字母被排进正文）；③ compositionend 时一次性插入整段汉字。三步任何一步错，中文用户第一分钟就会卸载你。</p>
+
+    <h3>命中测试：从 (x, y) 找回字符下标</h3>
+    <p>用户点一下，你拿到的是相对画布的坐标。要变成「第 137 个字符」，必须查表。表就是第 2 章顺手生成的坐标表——每个字符一条记录，含四个角的坐标。查询本体是一次朴素的线性扫描：</p>
+
+    <div class="code"><div class="code-bar"><b>命中：线性扫描 + 矩形判定（真实源码，节选）</b><span>Position.ts · getPositionByXY</span></div>
+<pre><span class="k">for</span> (<span class="k">let</span> j = <span class="n">0</span>; j &lt; positionList.length; j++) {
+  <span class="k">const</span> { pageNo, left,
+          coordinate: { leftTop, rightTop, leftBottom } } = positionList[j];
+  <span class="k">if</span> (pageNo !== positionNo) <span class="k">continue</span>;      <span class="c">// 只在当前页找</span>
+  <span class="k">if</span> (pageNo &gt; positionNo) <span class="k">break</span>;          <span class="c">// 按页排过序，可以提前断</span>
+  <span class="c">// 矩形包含判定（left 是列表缩进，命中区从「缩进后」起算）</span>
+  <span class="k">if</span> (leftTop[<span class="n">0</span>] - left &lt;= x && rightTop[<span class="n">0</span>] &gt;= x
+   && leftTop[<span class="n">1</span>] &lt;= y && leftBottom[<span class="n">1</span>] &gt;= y) {
+    <span class="k">return</span> { index: j };                    <span class="c">// 命中第 j 个字符</span>
+  }
+}</pre></div>
+
+    <p>看着简单，但真正的复杂性全在「<strong>没命中</strong>的时候」。用户会点行尾右边的空白、点两行之间的缝隙、点页面下方的空白区。这些情况下不能返回「未命中」就完事——光标必须<strong>就近吸附</strong>到最合理的位置。标本项目的兜底逻辑值得整段读：先拿「每行最后一个字」的标记（<code>isLastLetter</code>）反查这个 y 落在哪一行的纵向范围里，再在这一行里按 x 判断：<code>x &lt; 行首</code> 就吸附行首，否则落到该行最后一个字符。这就是你在所有编辑器里都感受过、却从没想过的东西：<strong>点在行尾右侧的空白，光标会乖乖跳到那一行的末尾。</strong></p>
+    <p>还有一层顺序问题：浮动图片（衬于文字下方/浮于文字上方）的命中要先于正文、或后于正文——<strong>必须和绘制顺序一致</strong>，否则「看见的顶层」和「点中的顶层」不是同一个东西。又一次：三个消费者必须对同一份数据达成一致。</p>
+
+    <div class="pull">命中测试是唯一一处「几何 → 数据」的逆向工程。<b>它错一个边界条件，用户就会说这个编辑器「手感不对」——而且说不清哪不对。</b></div>
+<h3>「手感」在技术上的构成</h3>
+    <p>下面这张表是我认为最能区分「真做过」与「读过文章」的部分——每一条都是能让人当场沉默的踩坑记录：</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>症状</th><th>技术原因</th><th>修法</th></tr></thead>
+        <tbody>
+          <tr><td>点字中间总选到右边那个字</td><td>命中后直接取该字符下标，没按 x 相对中点的位置分前后</td><td>x 过字符中点 → 吸附到字后；不过 → 吸附到字前</td></tr>
+          <tr><td>点行尾空白，光标乱跳</td><td>没命中任何字符，直接用了兜底下标</td><td>先按 y 定位行（isLastLetter 反查），再按 x 吸附行尾</td></tr>
+          <tr><td>双击选词，选中的是整段</td><td>没有词边界索引，词边界退化成段落边界</td><td>维护字符 → 词的边界表（中英文规则不同）</td></tr>
+          <tr><td>悬停在图片上光标不变</td><td>浮动图不参与行排版，正文坐标表里没有它</td><td>浮动元素单独一张位置表，命中顺序与绘制顺序一致</td></tr>
+          <tr><td>移动端长按选字选不中</td><td>触摸坐标没减滚动偏移、没除缩放系数</td><td>统一换算到画布 CSS 像素空间再进坐标表</td></tr>
+          <tr><td>光标看着比文字高半行</td><td>忘了减 descent，或没考虑 scale</td><td>光标 top 按基线反算，不按字框顶</td></tr>
+          <tr><td>输入拼音时正文乱跳</td><td>composition 期间触发了重排</td><td>组合期间冻结排版，compositionend 一次性插入</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="demo" id="d3">
+      <div class="demo-head">
+        <span class="demo-tag">DEMO 03 · HIT TEST</span>
+        <span class="demo-title">命中测试台<span class="hint">在纸面上点一下，看两种算法怎么找到那个字</span></span>
+      </div>
+      <div class="demo-body">
+        <div class="controls">
+          <div class="ctl-btn">
+            <div class="hit-mode" id="d3-mode">
+              <button data-mode="scan" aria-pressed="true">逐个扫描</button>
+              <button data-mode="binary" aria-pressed="false">行索引 + 吸附</button>
+            </div>
+          </div>
+          <div class="ctl" style="flex:0 1 170px">
+            <label class="switch" style="margin-bottom:2px"><input type="checkbox" id="d3-grid"/>显示坐标网格</label>
+          </div>
+          <div class="ctl-btn">
+            <button class="ghost" id="d3-reset">重置</button>
+          </div>
+        </div>
+        <div class="hit-wrap">
+          <div class="hit-page" id="d3-page">
+            <div class="hit-cross" id="d3-cross" style="display:none"></div>
+          </div>
+          <div class="hit-side">
+            <h5>HIT RESULT</h5>
+            <div class="hit-big"><span id="d3-index">—</span><small>命中的字符下标（⁺＝插入点在字后，⁻＝字前）</small></div>
+            <div class="hit-log" id="d3-log">在左边纸面上点一下。</div>
+            <div class="hintline">红竖线＝光标落点。点行尾右侧空白、点两行缝隙、点页面底部——看吸附规则怎么兜底。</div>
+          </div>
+        </div>
+        <div class="hintline" style="margin-top:11px">模型说明：纸面上的字是真实 DOM 文本，坐标表由 <code>getBoundingClientRect</code> 实测构建（等价于真实实现的 positionList），命中判定与真实源码同一套矩形条件。「逐个扫描」模式会真的从第 0 个字符遍历——那正是大文档里每次点击的真实成本。</div>
+      </div>
+      <div class="demo-foot">切到「逐个扫描」再点右下角空白：日志会滚出几十行 no，最后给出一次吸附。这就是为什么认真实现都要先按行索引——<b>行数远少于字符数</b>，先把 y 定位到行，再在行内做几次比较就够了。</div>
+    </div>
+
+    <p>光标和命中都对了，用户会觉得「这个编辑器能用」。然后他会打字，会按 Ctrl+Z，会刷新页面。从这一刻起，你面对的是<strong>状态</strong>——状态比几何难得多，因为它有时间维度。</p>
+  </div>
+</section>

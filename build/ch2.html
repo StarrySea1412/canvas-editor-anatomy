@@ -1,0 +1,138 @@
+<section class="chapter" id="ch2">
+  <div class="ch-head">
+    <div class="ch-num"><b>02</b>CHAPTER<br/>06:20</div>
+    <div class="ch-title">
+      <h2>一次字符测量的旅行</h2>
+      <p>断行不是数字符个数，是逐字量完再决定往哪折——而这套测量本身，就是整个编辑器最贵的一次往返</p>
+    </div>
+  </div>
+  <div class="ch-body">
+    <p class="lede">先问一个看似幼稚的问题：一个汉字有多宽？十六号字，一个汉字大约十六像素——这个答案对等宽字体成立，对绝大多数中文字体也近似成立。那英文呢？「i」和「W」在同一个字号下，宽度能差三倍以上。所以「这一行能放多少个字」这个问题，诚实的答案是：<strong>不知道，得一个一个量。</strong></p>
+
+    <h3>为什么不能数长度</h3>
+    <p>如果按字符个数切行，一行里塞十个「i」和一串「WWWW」，屏幕上会出现一行很短、一行溢出的惨状。如果按「平均字宽 × 个数」估算，只要出现粗体、字号混排、中英混排、标点，误差立刻累积成可见的错位。真实的排版必须是逐字符的：</p>
+
+    <div class="code"><div class="code-bar"><b>断行的最小骨架</b><span>伪代码 · 与真实实现同构</span></div>
+<pre><span class="k">let</span> x = <span class="n">0</span>;
+<span class="k">for</span> (<span class="k">const</span> el <span class="k">of</span> elementList) {            <span class="c">// 逐个字符元素</span>
+  ctx.font = <span class="f">getElementFont</span>(el);             <span class="c">// ① 切字体（斜体/粗体/字号）</span>
+  <span class="k">const</span> m = <span class="f">measureText</span>(ctx, el);           <span class="c">// ② 量宽（有缓存）</span>
+  <span class="k">if</span> (x + m.width &gt; availableWidth) {        <span class="c">// ③ 超了要折行</span>
+    <span class="f">pushRow</span>();                               <span class="c">//    但折点在哪？→ 见下文</span>
+    x = <span class="n">0</span>;
+  }
+  <span class="f">place</span>(el, x); x += m.width;
+}</pre></div>
+
+    <p>这段代码在标本项目里对应着 <code>Draw.ts</code> 里 2979 行中的一大段 <code>computeRowList</code>。它比伪代码多出来的每一行，都是一个真实的坑。逐个看。</p>
+
+    <h3>坑一：measureText 很贵，所以要缓存；缓存的键里必须有字体</h3>
+    <p><code>ctx.measureText()</code> 是一个同步调用，要穿过 JS 与图形层边界。单次几微秒，但一篇两万字的文档一次完整排版就是两万次；用户每敲一个键、每拖一次选区，都可能触发完整重排。所以所有认真的实现都会加缓存，标本项目里的写法朴素到近乎简陋，却精确地踩在正确性上：</p>
+
+    <div class="code"><div class="code-bar"><b>字宽缓存（真实源码，节选）</b><span>TextParticle.ts</span></div>
+<pre><span class="k">const</span> id = <span class="s">`${element.value}${ctx.font}`</span>;    <span class="c">// ← 键 = 字符 + 完整字体串</span>
+<span class="k">const</span> hit = <span class="k">this</span>.cacheMeasureText.<span class="f">get</span>(id);
+<span class="k">if</span> (hit) <span class="k">return</span> hit;                        <span class="c">// 命中，零成本</span>
+<span class="k">const</span> textMetrics = ctx.<span class="f">measureText</span>(element.value);
+<span class="k">this</span>.cacheMeasureText.<span class="f">set</span>(id, textMetrics);
+<span class="k">return</span> textMetrics;</pre></div>
+
+    <p>「字体串也算进键」是这段代码的灵魂。<code>ctx.font</code> 是一整个字符串——<code>"bold 24px Microsoft YaHei"</code>——粗细、字号、字体名任何一个变了，串就不同，缓存自动失效。<strong>如果只拿字符做键，用户把「排」从 16 号改成 24 号，缓存会面不改色地告诉你它还是 16 像素宽，整行排版全部错位。</strong>这类 bug 在测试环境里很难发现，因为测试用的都是同一种格式。</p>
+    <p>顺带一提，测量不用正在显示的那块画布。标本项目在 <code>computeRowList</code> 开头专门造了一块看不见的离屏画布：</p>
+
+    <div class="code"><div class="code-bar"><b>离屏测量画布（真实源码，节选）</b><span>Draw.ts · computeRowList 开头</span></div>
+<pre><span class="k">if</span> (!<span class="k">this</span>._measureCanvas) {
+  <span class="k">this</span>._measureCanvas = document.<span class="f">createElement</span>(<span class="s">'canvas'</span>);
+  <span class="k">this</span>._measureCtx   = <span class="k">this</span>._measureCanvas.<span class="f">getContext</span>(<span class="s">'2d'</span>);
+}
+<span class="k">const</span> ctx = <span class="k">this</span>._measureCtx!;</pre></div>
+
+    <p>原因有二：一是测量只需要 2D 上下文，不需要像素，用可见页的上下文反而要来回切换它的状态；二是可见页的上下文带着 <code>scale(dpr)</code> 变换，在它上面量出来的宽度会被放大 DPR 倍——排版要在 CSS 像素空间做，量宽也得在同一个空间。</p>
+
+    <p class="note"><b>另一个更隐蔽的坑：字体没加载完。</b>用 Web Font 时，字体加载前后 <code>measureText</code> 返回不同宽度。如果排版发生在字体到位之前，整篇文档按回退字体排好，字体到位后不重排——用户看到的就是文字「挤在一起」或「稀稀拉拉」。正确做法是 <code>document.fonts.ready</code> 之后再做首次排版。这篇页面自己的小样也遵守这条（你打开页面时小样等了字体才渲染第一次）。</p>
+
+    <h3>坑二：行高不是「这行最高的字有多高」</h3>
+    <p>几乎所有自研实现都会在这里踩一遍。<code>measureText</code> 返回的 <code>actualBoundingBoxAscent/Descent</code> 是<strong>这个字符墨迹的实际上下界</strong>——「口」「国」「一」「g」四个字的上下界完全不同。如果按每个字符自己的墨迹算行高，同一行里出现一个「g」（有下沉）或「·」（几乎没有高度），整行就会跳。</p>
+    <p>标本项目里的解法带了一句注释，比任何教程都说得清楚：</p>
+
+    <div class="code"><div class="code-bar"><b>基准字（真实源码，节选）</b><span>基准字符是一个固定取样的「中」</span></div>
+<pre><span class="c">// 使用基于字体的基准度量以确保一致的行高，避免字符特定度量导致的布局跳动</span>
+<span class="k">const</span> basisMetrics = <span class="k">this</span>.textParticle.<span class="f">measureBasisWord</span>(ctx, element.font!);
+metrics.boundingBoxAscent  = basisMetrics.actualBoundingBoxAscent  * scale;
+metrics.boundingBoxDescent = basisMetrics.actualBoundingBoxDescent * scale;</pre></div>
+
+    <p>所谓基准字，就是<strong>对每种字体固定量一个「中」字</strong>（源码常量 <code>METRICS_BASIS_TEXT = '中'</code>），之后这个字体里所有字符的行高贡献都用它的上下界。同一字体同一字号的行，无论内容是什么，行高永远一致。代价是极端情况下墨迹可能微微探出行盒子——但用户看不见那个，用户只看得见「行高稳不稳定」。</p>
+
+    <div class="pull">排版里所有「看起来对」的近似，背后都是同一个取舍：<b>牺牲墨迹的绝对精确，换布局的绝对稳定。</b></div>
+
+    <h3>坑三：折行点不是「放不下的那个字」</h3>
+    <p>中文的断行可以发生在任意两个字之间（除了避头尾），但英文不行——<code>document</code> 不能折成 <code>docu</code> + <code>ment</code>，否则读者会在行尾看到半个词。所以断行算法遇到英文单词时，要先把它<strong>整体</strong>量出宽度：整个词放得下当前行剩余空间，就整词计入；整个词比一行还宽，才允许硬拆。标本项目里对应着一段专门的词宽预量：</p>
+
+    <div class="code"><div class="code-bar"><b>整词与标点（真实源码，节选）</b><span>Draw.ts · 折行判定</span></div>
+<pre><span class="c">// 累计行宽 + 当前元素宽度 + 排版宽度(英文单词整体宽度 + 后面标点符号宽度)</span>
+<span class="k">let</span> curRowWidth = curRow.width + metrics.width;
+<span class="k">if</span> (<span class="k">this</span>.options.wordBreak === WordBreak.BREAK_WORD) {
+  <span class="k">const</span> word = <span class="s">`${preElement?.value || ''}${element.value}`</span>;
+  <span class="k">if</span> (<span class="k">this</span>.WORD_LIKE_REG.<span class="f">test</span>(word)) {
+    <span class="k">const</span> { width, endElement } = <span class="k">this</span>.textParticle.<span class="f">measureWord</span>(ctx, elementList, i);
+    <span class="k">const</span> wordWidth = width * scale;
+    <span class="k">if</span> (endElement && wordWidth &lt;= availableWidth) {
+      curRowWidth += wordWidth;              <span class="c">// 整词计入本行</span>
+      nextElement = endElement;              <span class="c">// 判定边界推到词尾</span>
+    }
+  }
+  <span class="c">// 标点符号：跟着词一起算，不让句号孤零零顶到下一行行首</span>
+  curRowWidth += <span class="k">this</span>.textParticle.<span class="f">measurePunctuationWidth</span>(ctx, nextElement) * scale;
+}</pre></div>
+
+    <p>注意最后那行标点处理：<strong>句号、逗号不能出现在行首</strong>（避尾规则）。所以计算一个词能不能放进这行时，必须把它后面的标点也一起算进去——否则你会得到「词放得下了，但句号被挤到下一行开头」这种丑到没救的结果。中文还有另一半：行首不能是收尾标点（<code>。，、；：？！）」</code>），行尾不能是开口标点（<code>（「</code>）。标本项目把这张清单硬编码成一个二十来项的常量数组——不优雅，但每一项都是排出来的血泪。</p>
+
+    <h3>坑四（最贵的那一个）：排版是 O(文档长度)，而每次按键都会触发</h3>
+    <p>把上面所有东西合起来：一次完整排版 = 遍历全部字符 ×（查缓存量宽 + 折行判定 + 记录坐标）。两万字文档，就算缓存全命中，也要遍历两万个对象、累加两万次宽度、生成两万条坐标记录。这个成本无论缓存多好都降不到零，因为它<strong>和文档长度线性相关</strong>。</p>
+    <p>而用户打字时每次按键都触发「内容变更 → 重排 → 重绘」。大文档必然卡。业界的答案不是「把排版写得更快」，而是两招更粗的：<strong>只画可见页</strong>（第 3 章）、<strong>降级渲染</strong>（低端机关精细效果）。第 4 条 JD 里说的「性能优化」，在编辑器语境里首先是这两条架构决策，其次才是技巧。</p>
+
+    <div class="demo" id="d1">
+      <div class="demo-head">
+        <span class="demo-tag">DEMO 01 · TYPESET</span>
+        <span class="demo-title">排版流水线<span class="hint">拖动版心宽度，看每个字怎么被量、哪一行先折</span></span>
+      </div>
+      <div class="demo-body">
+        <div class="controls">
+          <div class="ctl" style="flex:2 1 260px">
+            <label>文本 <b id="d1-len">0 字</b></label>
+            <input type="text" id="d1-text" value="把文字画成像素，是一次造物。排版引擎先量每一个字，再决定往哪折。" spellcheck="false"/>
+          </div>
+          <div class="ctl" style="flex:1 1 170px">
+            <label>版心宽度 innerWidth <b id="d1-w">420</b></label>
+            <input type="range" id="d1-width" min="180" max="560" step="10" value="420"/>
+          </div>
+          <div class="ctl" style="flex:0 1 150px">
+            <label>字号 <b id="d1-fs">16</b></label>
+            <input type="range" id="d1-fs-in" min="10" max="26" step="1" value="16"/>
+          </div>
+        </div>
+        <div class="ts-stage" id="d1-stage">
+          <div class="ts-ruler" id="d1-ruler"></div>
+          <div id="d1-lines"></div>
+        </div>
+        <div class="ts-legend">
+          <span class="l-fit">已逐字量宽</span>
+          <span class="l-wrap">行尾剩余空间</span>
+          <span class="l-break">折行起点</span>
+        </div>
+        <div class="ts-readout">
+          <div>字符数<b id="d1-n">0</b></div>
+          <div>行数<b id="d1-rows">0</b></div>
+          <div>量宽次数<b id="d1-measure">0<small>次</small></b></div>
+          <div>最后一行填充率<b id="d1-fill">0<small>%</small></b></div>
+        </div>
+        <p class="ts-naive" id="d1-naive"></p>
+        <div class="hintline" style="margin-top:10px">模型说明：字宽按「全角＝1.0×字号，半角＝0.55×字号」确定性推算，与真实 <code>measureText</code> 的量级关系一致（真实取值随字体浮动 ±5%）。「量宽次数」＝字符数——这就是逐字排版的本质成本；缓存可以把重复量宽降到零，但首次排版躲不掉。</div>
+      </div>
+      <div class="demo-foot">试着在文本里混进一串英文字母（比如 paste measures），再拖窄版心：<b>折行点会跳到整个单词的开头</b>，行尾留出一大段空白——那就是「整词不拆」的代价，也是正确排版的证据。</div>
+    </div>
+
+    <p>小样里那个「量宽次数」，就是这一层的全部重量：它等于字符数。后面所有章节的复杂度，都是从这个线性数字上长出来的。</p>
+    <p>量完了，字有宽有高，坐标也定了。接下来是把它们真正画到画布上——而「画」这个动作里，藏着一个能让帧率差出十倍的秘密。</p>
+  </div>
+</section>

@@ -1,0 +1,62 @@
+<section class="chapter" id="ch1">
+  <div class="ch-head">
+    <div class="ch-num"><b>01</b>CHAPTER<br/>00:00</div>
+    <div class="ch-title">
+      <h2>不用 contenteditable 的账本</h2>
+      <p>六个本来自动白送的东西，换成 canvas 之后都要自己付钱——先把这张账单摊开，再逐项去付</p>
+    </div>
+  </div>
+  <div class="ch-body">
+    <p class="lede">先说清楚为什么有人要受这份罪。<code>contenteditable="true"</code> 加一个 div，五秒钟你就有富文本编辑器了：光标、选区、断行、复制粘贴、输入法，全是浏览器白送的。那为什么在线文档、标书系统、报表设计器、电子病历编辑器，一个个都绕开了它？</p>
+
+    <h3>先说 contenteditable 给出的，和它不给的</h3>
+    <p>它给的是一套<strong>对你完全黑箱的排版结果</strong>。浏览器把内容和样式渲染成一棵 DOM 树，交给排版引擎，输出一堆高度不可控的盒子。你想知道「第 3 行第 12 个字距离左边多少像素」，唯一的办法是 <code>getClientRects()</code> 遍历——而它的结果依赖浏览器对行内盒子的切分策略，跨浏览器不稳定，性能还差。</p>
+    <p>这在「写篇文章发出去」的场景里无所谓，但在下面这些场景里是致命的：</p>
+    <ul>
+      <li><strong>分页</strong>——A4 纸、页眉页脚、页码、「第几页共几页」。DOM 流式布局天然不知道「页」是什么，你得靠算高度硬切，切点往往落在行中间。</li>
+      <li><strong>精确复现</strong>——用户要求「导出 PDF、打印出来，和屏幕上看到的完全一样」，甚至要求「和 Word 里的版式完全一样」。DOM 渲染依赖字体回退、子像素和浏览器差异，这三样每台机器都不同；canvas 画出来的东西，就是同一份绘制指令，走到哪都一样。</li>
+      <li><strong>非文本对象</strong>——表格跨页拆分、浮动图片环绕文字、表单控件、水印、套打模板的绝对定位。DOM 里每个都要打补丁，补到后面你自己都记不清哪个 hack 在管哪块。</li>
+      <li><strong>超大文档</strong>——几万字加几十个表格的文档，DOM 节点以万计，每次输入触发一次全树样式计算和布局，卡顿是结构性的，不是优化能救的。</li>
+    </ul>
+    <p>于是有了另一条路：<strong>自己定义文档模型，自己排版，自己画。</strong>文字不进 DOM，进 canvas。这条路换来的是完全的可控和确定——代价是，浏览器本来白送的六件事，你要一件一件自己做，而且每件都要付真金白银的工程时间。</p>
+
+    <div class="fig">
+      <div class="frame">
+        <p class="layers-cap">FIG. 01 · 六层解剖图——同一个字符在六层之间被反复理解，每层都必须和上一层对得上</p>
+        <div class="layers">
+          <div class="layer"><span class="layer-mark lm-1"></span><i>L1</i><b>文档模型<small>elementList</small></b><p>一个平坦数组，<strong>每个字符是一个对象</strong>：<code>{ value: '排', size: 16, bold: true }</code>。没有节点树——行和页都是算出来的临时产物，不存进数据。</p></div>
+          <div class="layer"><span class="layer-mark lm-2"></span><i>L2</i><b>测量<small>measureText</small></b><p>每个字的宽度必须问画布：设好 <code>ctx.font</code> 再 <code>ctx.measureText('排').width</code>。同一个字，换字号就是另一个数。</p></div>
+          <div class="layer"><span class="layer-mark lm-3"></span><i>L3</i><b>断行<small>computeRowList</small></b><p>从左往右累加宽度，超过 <code>innerWidth</code> 就折。但中文能随便折、英文单词不能拆、标点不能顶行首——三条规矩在这一层打架。</p></div>
+          <div class="layer"><span class="layer-mark lm-4"></span><i>L4</i><b>成行与定位<small>rowList / positionList</small></b><p>每行记下高度、基线、起始下标；每个字记下四个角的坐标。<strong>这份坐标表，后面所有人都在读。</strong></p></div>
+          <div class="layer"><span class="layer-mark lm-5"></span><i>L5</i><b>绘制<small>fillText</small></b><p>按坐标把字填进 canvas。关键优化：<strong>同一字体同一颜色的连续字符合并成一次 fillText</strong>——上万次调用变几十次。</p></div>
+          <div class="layer"><span class="layer-mark lm-6"></span><i>L6</i><b>交互<small>光标 / 命中 / 选区</small></b><p>反向解读 L4 的坐标表：鼠标 <code>(x, y)</code> 落在哪个字的框里？光标画在第几个字后面？选区从哪到哪？</p></div>
+        </div>
+      </div>
+      <figcaption><span><b>FIG. 01</b> 六层，一份数据，三个消费者：排版、绘制、交互</span><span>贯穿全文的地图</span></figcaption>
+    </div>
+
+    <p>这张图不是教学抽象，是从一个真实项目里量出来的。我解剖的标本是开源项目 <strong>canvas-editor</strong>（MIT 协议，npm 上叫 <code>@hufe921/canvas-editor</code>），一句自我介绍写得很清楚：「a rich text editor by canvas/svg」。它的绘制核心是一个 2979 行的 <code>Draw.ts</code>，整个 core 目录 117 个 TypeScript 文件、19 个子模块——分工大致就是 FIG. 01 的六层，再加事件、快捷键、右键菜单这些外壳。</p>
+    <p>下面这张表是那笔账的明细。左边是 contenteditable 模式下浏览器替你做的事，右边是 canvas 模式下你要自己做的事：</p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>能力</th><th>contenteditable</th><th>canvas 自绘</th></tr></thead>
+        <tbody>
+          <tr><td><b>断行与行高</b></td><td>浏览器排版引擎，免费</td><td>逐字测量 + 缓存 + 基准字行高（第 2 章）</td></tr>
+          <tr><td><b>光标与输入法</b></td><td>原生，免费</td><td>DOM 光标 div + 隐藏输入代理（第 4 章）</td></tr>
+          <tr><td><b>命中测试</b></td><td>浏览器事件天然知道点在哪个节点</td><td>坐标表矩形判定 + 就近吸附（第 4 章）</td></tr>
+          <tr><td><b>选区高亮</b></td><td>原生</td><td>区间 → 按行合并矩形 → 画在文字下层（第 4 章）</td></tr>
+          <tr><td><b>撤销重做</b></td><td>浏览器内建 undo 栈</td><td>闭包快照栈 + 合并策略（第 5 章）</td></tr>
+          <tr><td><b>自动保存 / 状态恢复</b></td><td>表单有部分原生恢复，富文本没有</td><td>节流写入 IndexedDB + pagehide 兜底（第 5、6 章）</td></tr>
+          <tr><td><b>无障碍 / 读屏</b></td><td>大部分免费</td><td class="warn">几乎全部要自己补：键盘导航 + ARIA live 区域</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>表里最后一行值得单独说：<strong>无障碍是这笔账里最贵、也最常被假装不存在的。</b>canvas 对读屏软件来说就是一块空白的图。真实产品里要补完整套键盘导航、虚拟光标、ARIA live 公告——这部分的工程量常常超过渲染本身。这篇不展开（第六篇手记的事），但每次吹嘘 canvas 编辑器的时候，这一行都应该挂在账上。</p>
+
+    <div class="pull">六层账单里，前五层是「做出来」，最后一层是「做对」。<b>大部分自研编辑器死在最后一层。</b></div>
+
+    <p>好，账摊开了。从最底层、也最容易被低估的那一层开始：一个字有多宽。</p>
+  </div>
+</section>

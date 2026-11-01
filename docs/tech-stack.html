@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<style>
+@font-face{font-family:"LXGW WenKai";src:url("../assets/fonts/wenkai-regular.woff2") format("woff2");font-weight:300 599}
+@font-face{font-family:"LXGW WenKai";src:url("../assets/fonts/wenkai-medium.woff2") format("woff2");font-weight:600 900}
+*{box-sizing:border-box;margin:0}
+body{width:900px;background:#e9e2d0;font-family:"LXGW WenKai","Microsoft YaHei",sans-serif;color:#24251f;padding:34px 30px}
+.sheet{background:#efeade;border:2px solid #24251f;border-radius:6px;padding:34px 36px 26px;box-shadow:8px 8px 0 rgba(120,108,82,.25);position:relative;overflow:hidden}
+.sheet::before{content:"";position:absolute;inset:0;background-image:linear-gradient(rgba(45,90,135,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(45,90,135,.05) 1px,transparent 1px);background-size:24px 24px;pointer-events:none}
+.tag{display:inline-block;font-size:12px;letter-spacing:.28em;color:#f7f4ea;background:#2d5a87;padding:5px 14px;border-radius:3px;font-weight:700}
+h1{font-size:44px;letter-spacing:-.01em;margin:14px 0 6px;line-height:1.25}
+h1 em{font-style:normal;color:#b8402e}
+.sub{font-size:15.5px;color:#4b4c43;line-height:1.8;margin-bottom:20px}
+.hero-card{position:relative;background:#f8f5ea;border:1.5px solid #bdb39a;border-left:5px solid #b8402e;border-radius:4px;padding:15px 18px;display:flex;gap:16px;align-items:center;box-shadow:3px 3px 0 rgba(120,108,82,.16)}
+.hero-card b{font-size:17px;display:block;margin-bottom:3px}
+.hero-card p{font-size:12.8px;color:#7d7b6d;line-height:1.7}
+.hero-num{flex:0 0 auto;font-family:Consolas,monospace;font-size:30px;font-weight:700;color:#2d5a87;background:#eaf0f6;border:1px solid rgba(45,90,135,.3);border-radius:4px;padding:8px 14px;text-align:center;line-height:1.15}
+.hero-num small{display:block;font-size:10px;color:#7d7b6d;font-weight:400;letter-spacing:.1em}
+.flow{display:flex;justify-content:center;gap:0;margin:16px 0 18px;position:relative}
+.flow span{font-family:Consolas,monospace;font-size:12px;color:#2d5a87;background:#f8f5ea;border:1.5px dashed rgba(45,90,135,.4);padding:6px 12px;border-radius:3px}
+.flow i{align-self:center;color:#b8402e;font-style:normal;padding:0 8px;font-size:14px}
+.grid{position:relative;display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.card{background:#f8f5ea;border:1.5px solid #bdb39a;border-radius:4px;padding:14px 16px;box-shadow:3px 3px 0 rgba(120,108,82,.14)}
+.card h3{font-size:16px;display:flex;align-items:center;gap:9px;margin-bottom:8px}
+.card h3 i{font-style:normal;font-family:Consolas,monospace;font-size:12px;color:#f7f4ea;border-radius:3px;padding:3px 8px;letter-spacing:.08em}
+.card p{font-size:12.6px;color:#4b4c43;line-height:1.78}
+.card p b{color:#24251f}
+.c1 h3 i{background:#2d5a87}.c2 h3 i{background:#2f7a6a}.c3 h3 i{background:#a8812f}
+.c4 h3 i{background:#b8402e}.c5 h3 i{background:#6d6486}.c6 h3 i{background:#7a6a4f}
+.bars{margin-top:14px;position:relative;background:#f8f5ea;border:1.5px solid #24251f;border-radius:4px;padding:12px 18px;display:flex;justify-content:space-between;align-items:center;box-shadow:3px 3px 0 rgba(120,108,82,.2)}
+.bars b{font-size:13.5px}
+.bars small{display:block;font-size:11px;color:#7d7b6d;margin-top:2px}
+.pill{font-family:Consolas,monospace;font-size:11px;color:#2d5a87;border:1px solid rgba(45,90,135,.4);padding:4px 10px;border-radius:2px;background:#eaf0f6;margin:3px 0 3px 6px;white-space:nowrap}
+.bars>div:last-child{display:flex;flex-wrap:wrap;justify-content:flex-end;max-width:300px}
+.foot{margin-top:14px;text-align:center;font-size:11px;color:#a5a08d;letter-spacing:.12em}
+</style>
+</head>
+<body>
+<div class="sheet">
+  <span class="tag">造物手记 VOL.09 · 2026.11</span>
+  <h1>把文字<em>画成像素</em></h1>
+  <p class="sub">一个可视化编辑器的七层解剖：不用 contenteditable 之后，排版、绘制、光标、命中、撤销、存储各要付多少钱——每个论点配一枚可调参数的确定性小样。</p>
+  <div class="hero-card">
+    <div class="hero-num">7+4<small>章 + 小样</small></div>
+    <div>
+      <b>解剖标本：canvas-editor（MIT · v0.9.132）</b>
+      <p>a rich text editor by canvas/svg —— 绘制核心 Draw.ts 单文件 2979 行，core 目录 117 个 TS 文件；本文所有引文均标注真实文件与函数名，全部可核对。</p>
+    </div>
+  </div>
+  <div class="flow"><span>字符串</span><i>→</i><span>measureText 量宽</span><i>→</i><span>断行成行</span><i>→</i><span>positionList</span><i>→</i><span>fillText 批次</span><i>→</i><span>命中反查</span></div>
+  <div class="grid">
+    <div class="card c1"><h3><i>01</i>排版引擎</h3><p><b>measureText 缓存</b>（键 = 字符 + 字体串）· 离屏测量画布 · <b>基准字「中」定行高</b>防跳动 · 中文避头尾 + 英文整词不拆</p></div>
+    <div class="card c2"><h3><i>02</i>绘制管线</h3><p>同样式连续字符<b>合并成一次 fillText</b>（RenderMode SPEED/COMPATIBILITY 双模式）· DPR 内外双尺寸 · 改尺寸必须重置上下文</p></div>
+    <div class="card c3"><h3><i>03</i>性能与内存</h3><p><b>IntersectionObserver 分页懒渲染</b>（连页模式豁免）· 一页 A4 @2x＝14.3MB 显存账 · 远页位图回收 · 撤销栈自适应上限</p></div>
+    <div class="card c4"><h3><i>04</i>交互逆向</h3><p><b>DOM 光标 + 隐藏输入代理</b>接 IME · getPositionByXY 矩形命中 · 行尾空白就近吸附 · 点击吸附按字符中点分前后</p></div>
+    <div class="card c5"><h3><i>05</i>状态与存储</h3><p><b>闭包快照撤销栈</b>（瘦身克隆丢 metrics/style）· 合并窗 + 断步规则 · IndexedDB 节流自动保存 · pagehide 兜底 · <b>Web Locks 防双开</b></p></div>
+    <div class="card c6"><h3><i>06</i>媒体处理</h3><p><b>createImageBitmap</b> 解码 + EXIF 方向 · 降采样到「显示宽×DPR×1.2」· Blob 进 IndexedDB · <b>OffscreenCanvas + Worker</b> 流水线 · 视频只存引用抓封面帧</p></div>
+  </div>
+  <div class="bars">
+    <div><b>四枚确定性小样</b><small>排版流水线 / 绘制合并台 / 命中测试台 / 撤销合并器 —— 无随机数，参数可调，行为可复现</small></div>
+    <div><span class="pill">单文件 0 依赖</span><span class="pill">LXGW 文楷子集</span><span class="pill">GitHub Pages</span></div>
+  </div>
+  <p class="foot">STARRYSEA1412.GITHUB.IO/CANVAS-EDITOR-ANATOMY · INK &amp; BLUEPRINT / 2026</p>
+</div>
+</body>
+</html>

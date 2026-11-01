@@ -1,0 +1,27 @@
+<div class="wrap epilogue" id="closing">
+  <h2>结语：接过来的是控制权，也是全部责任</h2>
+  <p>写完这篇，回头再看那条 JD 的第 ③ 条，「只做过管理后台表格页面的不合适」就不再像门槛，更像一句忠告。表格页面的世界里，浏览器是权威：它排文字、画光标、管历史、存表单。<strong>可视化编辑器的世界里，你就是权威</strong>——每一个像素为什么在那、每一个字符为什么折到这、每一次撤销退到哪，都必须有人给出可解释的答案。浏览器交出来的不是自由，是六份责任。</p>
+  <p>这篇文章能给你的不是六份责任的全部细节，而是三个带得走的判断：</p>
+  <div class="rules">
+    <div class="rule"><b>RULE 01 · 一份数据，三个消费者，一个都不能错</b><p>排版、绘制、命中测试读的是同一份坐标表。谁先算、谁缓存、谁失效，决定了光标和文字对不对得上。三个消费者的一致性，就是「手感」的技术实体。</p></div>
+    <div class="rule"><b>RULE 02 · 每个白送的功能都要标价</b><p>光标要闪、输入法要候选框、撤销要合并、断行要避头尾——在 contenteditable 里这些是浏览器的事，换成 canvas 就全是你的事。动手前先把六笔账写下来；缺哪笔，上线后哪笔就变成事故。</p></div>
+    <div class="rule"><b>RULE 03 · 库负责机制，宿主负责决策</b><p>canvas 编辑器库不自动保存、不做多标签仲裁，不是偷懒，是边界：它不知道自己跑在什么环境里。读懂库留给你的「内容变化回调 + 数据出口」，把存储决策接进自己的业务——这一层的判断力，比多会一个框架值钱。</p></div>
+  </div>
+  <div class="limits"><b>这篇没解决的：</b>协同编辑（OT/CRDT 是另一个世界，本篇的快照撤销在协同场景下完全不成立）；无障碍（canvas 对读屏软件天然失明，完整键盘导航 + ARIA live 补课的工程量常超过渲染本身，这是真实产品里最重的隐藏成本）；超大文档的极限优化（十万字级要分片排版 + Worker，本篇只点到为止）。</div>
+  <div class="links">
+    <a href="https://github.com/Hufe921/canvas-editor" target="_blank" rel="noopener">canvas-editor（本文解剖标本 · MIT）</a>
+    <a href="https://developer.mozilla.org/zh-CN/docs/Web/API/CanvasRenderingContext2D/measureText" target="_blank" rel="noopener">MDN · measureText</a>
+    <a href="https://developer.mozilla.org/zh-CN/docs/Web/API/Web_Locks_API" target="_blank" rel="noopener">MDN · Web Locks</a>
+    <a href="https://developer.mozilla.org/zh-CN/docs/Web/API/IndexedDB_API" target="_blank" rel="noopener">MDN · IndexedDB</a>
+    <a href="https://developer.mozilla.org/zh-CN/docs/Web/API/IntersectionObserver" target="_blank" rel="noopener">MDN · IntersectionObserver</a>
+    <a href="https://starrysea1412.github.io/agent-signals/" target="_blank" rel="noopener">上期 · VOL.08 Agent 的三条信号线</a>
+  </div>
+</div>
+
+<footer class="wrap site-foot">
+  <div>
+    <div>造物手记 VOL.09 · 把文字画成像素</div>
+    <div style="margin-top:5px">DRAFTING / 2026.11 / 单文件 · 零依赖 · 确定性小样</div>
+  </div>
+  <div class="foot-note">文中源码引文取自开源项目 canvas-editor（MIT License，v0.9.132），为可读性有删节与换行调整；小样中的估算均已标注模型与假设。四枚小样为确定性模型：无随机数、参数可调、行为可复现。字体为 LXGW 文楷（OFL 许可，见 assets/fonts/OFL.txt）。插图由 GPT 系图像模型生成。</div>
+</footer>

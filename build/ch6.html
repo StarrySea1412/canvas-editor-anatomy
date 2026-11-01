@@ -1,0 +1,67 @@
+<section class="chapter" id="ch6">
+  <div class="ch-head">
+    <div class="ch-num"><b>06</b>CHAPTER<br/>34:20</div>
+    <div class="ch-title">
+      <h2>三笔烂账：多标签页、内存、媒体</h2>
+      <p>JD 第 ④⑤⑥ 条的正面回答——三件事单独看都简单，放到同一份文档上就互相咬</p>
+    </div>
+  </div>
+  <div class="ch-body">
+    <p class="lede">到上一章为止，我们的编辑器还是「一个标签页里的孤岛」。真实用户不是这样的：他会开两个标签页对着改，会往文档里拖三十张照片，会把四万字的标书从头滚到尾。这三件事分别对应 JD 的第 ⑤④⑥ 条，而且它们<strong>互相咬</strong>：为省显存做的页 canvas 回收会伤媒体预览，为多标签做的同步会和自动保存打架，为媒体做的降采样又反过来救显存。</p>
+
+    <h3>第一笔：多标签页，谁说了算</h3>
+    <p>两个标签页打开同一份文档，各自内存里都有一份自己的副本。A 改了第三段，B 不知道；B 这时保存，A 的修改被覆盖。这就是「最后写入者胜出」——最常见的默认行为，也是最危险的，因为它<strong>静默丢数据</strong>：用户看不到任何报错，只是几天后发现那段话没了，而且无法证明是人的问题还是程序的问题。</p>
+    <p>解法有三档，成本完全不同：</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>方案</th><th>机制</th><th>防住什么</th><th>防不住什么</th></tr></thead>
+        <tbody>
+          <tr><td><b>互斥锁</b><br/><span class="hintline">最便宜</span></td><td>进编辑页先抢锁（<code>Web Locks API</code> 或 localStorage 心跳仲裁），抢不到进只读</td><td>同时编辑——直接不让它发生</td><td>假死的标签页占着锁不放（要做心跳超时）</td></tr>
+          <tr><td><b>乐观并发</b><br/><span class="hintline">推荐默认</span></td><td>每个标签页记住加载时的版本号，保存时带上 <code>baseVersion</code>；版本已变就弹「另一标签页已更新」</td><td>静默覆盖——冲突时给人看，让人选</td><td>用户选「用我的版本」时仍会覆盖（但至少是知情的）</td></tr>
+          <tr><td><b>实时协同</b><br/><span class="hintline">最贵</span></td><td><code>BroadcastChannel</code> / <code>storage</code> 事件广播每次变更，OT 或 CRDT 合并</td><td>几乎全部——那就是协作编辑产品了</td><td>复杂度本身：CRDT 是独立领域，不是「加个库」</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>对多数单机产品，正确答案是第二档，再加一个关键细节：<strong>收到冲突不要自动合并，把对方的版本拉过来让用户看、让用户选。</strong>富文本的自动合并和撤销合并是同一类难题——「两处编辑」在字符层面可能并不冲突，在语义上却已经互相矛盾。另外，Web Locks API 值得单独一提，它是浏览器原生的互斥锁，十行代码就能防住双开：</p>
+
+    <div class="code"><div class="code-bar"><b>Web Locks：十行代码防双开</b><span>锁粒度是「这份文档」，不是整个应用</span></div>
+<pre><span class="k">await</span> navigator.locks.<span class="f">request</span>(<span class="s">`doc:${docId}`</span>, <span class="k">async</span> (lock) => {
+  <span class="k">if</span> (!lock) {                       <span class="c">/* 拿不到锁：别人正在编辑 */</span>
+    enterReadonly(<span class="s">'该文档已在另一个标签页打开'</span>);
+    <span class="k">return</span>;
+  }
+  <span class="k">await</span> runEditor();                 <span class="c">/* 正常编辑；标签页关闭自动释放 */</span>
+});</pre></div>
+
+    <h3>第二笔：内存，页 canvas 是最大的不动产</h3>
+    <p>第 3 章说过懒渲染：只画进视口的页。但有个细节当时按下没表——<strong>懒渲染省的是绘制，不省画布本身</strong>。每个页 canvas 在创建时就按「CSS 尺寸 × DPR」的内部尺寸申请了位图。算一笔账：A4 是 794×1123 CSS 像素，DPR 2 下内部 1588×2246，RGBA 四字节，<strong>一页 14.3MB</strong>；一百页文档，光画布就 1.4GB。懒渲染只保证「不画」，画布的位图仍躺在显存里。</p>
+    <p>所以认真的实现还要加一层：<strong>对远离视口的页，主动清零位图</strong>（<code>canvas.width = canvas.height = 0</code>），只留占位元素维持滚动条高度，滚回来时重画。没有现成 API 提醒你做这一层，只有内存曲线会提醒你。这也解释了第 3 章那个「连页模式必须立即渲染」的取舍的另一面：连页高度会变，位图回收的时机算不准，索性不省。</p>
+    <p>显存之外还有两块，都是第 5 章埋的种子：</p>
+    <ul>
+      <li><strong>撤销栈</strong>——100 步 × 全文档快照，两万字 ≈ 200MB。上限应该随文档规模自适应：小文档 100 步，大文档降到 30 步。这是产品该做的自动降级，不是技术债。</li>
+      <li><strong>字宽缓存</strong>——键是「字符 + 字体串」，文档里出现过的组合全部留底。正常几十到几百 KB；但如果用户把表格里每个字都手动设成不同字号（真的会发生），缓存就膨胀。给缓存设一个上限（比如一万条，超了清最老的）是一行代码，但不能不写。</li>
+    </ul>
+    <p>排查这类问题的顺序值得背下来：性能面板看火焰图（排版/绘制/脚本各占多少）→ 堆快照对比两次操作之间的增量（快照栈、缓存、监听器）→ <code>Performance Monitor</code> 看 GPU 内存。JD 第 ④ 条那句「能排查页面卡顿、内存占用高的问题」，考的就是这套流程的肌肉记忆。</p>
+<h3>第三笔：媒体文件，进编辑器之前的五道关</h3>
+    <p>JD 第 ⑥ 条「图片、视频等媒体文件的前端处理」，在编辑器语境里的真实含义是：用户把一张 12MB 的手机原图拖进文档，编辑器不能卡死、显存不能爆炸、导出不能糊。这中间是五道关卡，每道都有标准答案：</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>关卡</th><th>要防什么</th><th>标准做法</th></tr></thead>
+        <tbody>
+          <tr><td><b>① 读取</b></td><td>同步 API 卡主线程</td><td><code>File.arrayBuffer()</code> / Blob 全异步，别用 FileReader 的同步思维</td></tr>
+          <tr><td><b>② 解码</b></td><td>一张 4000×3000 的 JPEG 解码后占 48MB 内存，且解码同步</td><td><code>createImageBitmap(blob)</code>，可带 <code>resizeWidth</code> 让浏览器解码时顺手降采样</td></tr>
+          <tr><td><b>③ 方向</b></td><td>手机竖拍的照片 EXIF 标了旋转，直接画会躺着</td><td><code>createImageBitmap(blob, { imageOrientation: 'from-image' })</code>——别自己解析 EXIF 字节，让浏览器做</td></tr>
+          <tr><td><b>④ 降采样</b></td><td>显示宽度只有 554px 的图，存 4000px 是纯浪费</td><td>缩到「显示宽 × DPR × 1.2 倍余量」再 <code>convertToBlob({ type: 'image/webp', quality: 0.85 })</code></td></tr>
+          <tr><td><b>⑤ 存储</b></td><td>base64 进 localStorage 膨胀 33% 且超配额</td><td>图片以 Blob 存 IndexedDB，文档里只存引用 id，导出时再合并</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>第②③④步如果放主线程做，一张大图就是 200ms 的卡顿；用户一次拖十张，就是两秒白屏。所以这五道关的正确位置是 <strong>Worker</strong>：<code>createImageBitmap</code>、<code>OffscreenCanvas.convertToBlob</code> 在 Worker 里都可用，主线程只把 File 丢过去、把结果收回来。第 1 章那张账单里没有这一行，但它是「媒体文件的前端处理经验」的全部实务。</p>
+    <p>视频则要克制得多，准则一句话：<strong>永远不要把视频「放进」文档数据里。</strong>文档只存引用（文件 id + 时长 + 分辨率），预览帧用 <code>&lt;video&gt;</code> seek 到 0.1 秒抓一帧画上封面。视频动辄几百 MB，IndexedDB 写一次痛一次，而 <code>&lt;video&gt;</code> 元素自己会流式加载——把流式加载的东西复制进内存，等于亲手拆掉浏览器已经做好的优化。</p>
+
+    <div class="pull">媒体处理准则：<b>文档存引用，不存内容；解码放 Worker，不占主线程；显示用多大，就存多大。</b></div>
+
+    <p>三笔账互相咬合的样子，值得再看一眼：媒体的降采样（第三笔）救了显存（第二笔）；多标签页的互斥锁（第一笔）让自动保存不必处理并发写入（第二笔的存储层）；撤销栈的自适应上限（第二笔）又取决于「当前是谁在编辑」（第一笔的锁状态）。<strong>JD 把这三条写成三行，是因为它们在实际工程里就是同一个礼拜里先后爆发的三个问题。</strong></p>
+    <p>最后一章，把全部内容收成一张能带走的清单。</p>
+  </div>
+</section>

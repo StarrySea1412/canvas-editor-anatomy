@@ -1,0 +1,83 @@
+<section class="chapter" id="ch7">
+  <div class="ch-head">
+    <div class="ch-num"><b>07</b>CHAPTER<br/>41:30</div>
+    <div class="ch-title">
+      <h2>一张自检清单</h2>
+      <p>面试可以照着问，自己也可以照着做——二十六个问题里能答上二十个，这条 JD 你就算接住了</p>
+    </div>
+  </div>
+  <div class="ch-body">
+    <p class="lede">写到这里可以收束了。下面这张清单按 JD 的四条要求分组，每一项都在正文里出现过、且都能在解剖的源码里找到对应物。它的用法有两种：面试前过一遍防冷场；或者——更狠的用法——<strong>挑一个周末，把打勾的行亲手做出来。</strong>做过一遍的人和不曾做过的人，聊十分钟就能分辨。</p>
+
+    <h3>第 ③ 条 · 可视化编辑器本体</h3>
+    <div class="tablewrap">
+      <table>
+        <tbody>
+          <tr><td class="num">01</td><td>文档模型是扁平字符数组还是块树？两种模型下，「在表格单元格里插入一段带样式文字」分别要动几处数据结构？</td></tr>
+          <tr><td class="num">02</td><td><code>measureText</code> 的缓存键是什么？为什么字体串必须进键？键设计错会出现什么症状？</td></tr>
+          <tr><td class="num">03</td><td>行高为什么用基准字而不是每个字符自己的墨迹高度？什么场景下基准字方案会露馅？</td></tr>
+          <tr><td class="num">04</td><td>中文避头尾需要哪些数据结构？英文整词不拆的判定发生在折行的哪一步？</td></tr>
+          <tr><td class="num">05</td><td>连续同样式的字符合并成一次 <code>fillText</code>，收口的触发条件有哪几种？漏掉一种会看到什么？</td></tr>
+          <tr><td class="num">06</td><td>光标为什么是 DOM 元素？它的高度为什么比字框高一点？什么时候必须保持实心？</td></tr>
+          <tr><td class="num">07</td><td>点在行尾右侧的空白处，光标落在哪？这个「就近吸附」要分几种情况兜底？</td></tr>
+          <tr><td class="num">08</td><td>选区高亮画在哪一层？跨页选区、反向拖选分别怎么处理？</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>第 ④ 条 · Canvas 与性能</h3>
+    <div class="tablewrap">
+      <table>
+        <tbody>
+          <tr><td class="num">09</td><td>DPR 是什么？改 <code>canvas.width</code> 会连带发生什么？为什么改完必须重新初始化上下文？</td></tr>
+          <tr><td class="num">10</td><td>懒渲染用什么 API？它省的是什么、不省的是什么？连页模式为什么不能懒？</td></tr>
+          <tr><td class="num">11</td><td>100 页文档的页 canvas 占多少显存？怎么主动回收远处页面的位图？</td></tr>
+          <tr><td class="num">12</td><td>排版是 O(文档长度)，每次按键都触发。这个矛盾的两个工程解法各牺牲什么？</td></tr>
+          <tr><td class="num">13</td><td>一次 50ms 的卡顿，怎么在 Performance 面板里判断它来自排版、绘制还是撤销恢复？</td></tr>
+          <tr><td class="num">14</td><td>哪些操作会让画布内容空白？至少列出三种原因和各自的判断方法。</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>第 ⑤ 条 · 本地存储与多标签页</h3>
+    <div class="tablewrap">
+      <table>
+        <tbody>
+          <tr><td class="num">15</td><td>localStorage 的三个硬限制是什么？哪类数据绝对不该放？超限时会发生什么？</td></tr>
+          <tr><td class="num">16</td><td>自动保存的节流策略怎么设计？<code>pagehide</code> 和 <code>beforeunload</code> 选哪个、为什么？</td></tr>
+          <tr><td class="num">17</td><td>IndexedDB 写入是异步的，怎么防「后发的保存先落地」？</td></tr>
+          <tr><td class="num">18</td><td>状态恢复要恢复哪些东西？文档版本号在恢复流程里扮演什么角色？</td></tr>
+          <tr><td class="num">19</td><td>两个标签页同时编辑，互斥锁 / 乐观并发 / 实时协同三档各防住什么？你的产品选哪档、为什么？</td></tr>
+          <tr><td class="num">20</td><td><code>Web Locks API</code> 的锁什么时候释放？持有者假死了怎么办？</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>第 ⑥ 条 · 媒体文件</h3>
+    <div class="tablewrap">
+      <table>
+        <tbody>
+          <tr><td class="num">21</td><td>一张 12MB 的手机原图从 <code>File</code> 对象到画布显示，中间要过哪五道关？</td></tr>
+          <tr><td class="num">22</td><td>EXIF 方向问题怎么来的？<code>imageOrientation: 'from-image'</code> 替你做了什么？</td></tr>
+          <tr><td class="num">23</td><td>降采样目标宽度怎么算？为什么不是「显示多宽就存多宽」？</td></tr>
+          <tr><td class="num">24</td><td>为什么图片 Blob 进 IndexedDB 而不是 base64 进 localStorage？体积差多少？</td></tr>
+          <tr><td class="num">25</td><td>视频为什么不进文档数据？封面帧怎么取？</td></tr>
+          <tr><td class="num">26</td><td>哪些媒体操作能放进 Worker？判断标准是什么？</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>如果只有一周</h3>
+    <p>最后给一条务实的路径。想在简历上诚实地写「做过可视化编辑器」，不需要做出能商用的产品，需要的是一个<strong>每个环节都亲手写过</strong>的最小实现——五百行左右，一周的晚间时间足够：</p>
+    <ul>
+      <li><strong>第 1 天：模型与测量。</strong>扁平字符数组 + <code>measureText</code> 缓存 + 逐字断行。验收标准：拖动窗口宽度，行实时重排、折点正确。</li>
+      <li><strong>第 2 天：绘制。</strong>整页 canvas + DPR 适配 + 同样式合并。验收标准：一万字文档滚动流畅，屏幕上打出的 <code>fillText</code> 次数从一万掉到一百以内。</li>
+      <li><strong>第 3 天：光标与命中。</strong>隐藏 input 接输入，坐标表反查命中，行尾空白吸附。验收标准：点哪光标到哪；中文输入法整句上屏不乱跳。</li>
+      <li><strong>第 4 天：选区与撤销。</strong>拖选画高亮矩形；快照栈 + 500ms 合并窗 + 标点断步。验收标准：连打 40 字一次退光；插入图片单独成步。</li>
+      <li><strong>第 5 天：持久化与多标签。</strong>IndexedDB 节流保存 + <code>pagehide</code> 兜底 + Web Locks 防双开。验收标准：刷新后内容与光标都在；双标签第二个进只读。</li>
+      <li><strong>周末：挑最不顺手的那一点打磨。</strong>那一点就是你面试时最能讲的东西——因为卡住你的地方，也会卡住别人，而你已经走过来了。</li>
+    </ul>
+    <p class="note"><b>一句诚实的提醒：</b>这个最小实现不会比开源编辑器好，也不需要比。它的价值在于：做完之后，你去读任何一个真实编辑器的源码——本篇解剖的这个、或者任何别的——都能在 30 分钟内找到「断行在哪、命中在哪、撤销在哪」。JD 第 ③ 条筛的就是这个。</p>
+    <p>清单到这里。结语说三句想留下的话。</p>
+  </div>
+</section>
